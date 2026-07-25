@@ -44,5 +44,5 @@ DEVICE: str = os.getenv("DEVICE", "cuda")
 
 def load_yaml_config(path: str) -> dict:
     """Load and return a YAML config file as a Python dict."""
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
