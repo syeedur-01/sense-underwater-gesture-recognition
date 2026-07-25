@@ -6,11 +6,12 @@ All paths and settings are read from environment variables (via .env)
 and YAML experiment configs. Never hardcode paths anywhere else —
 always import from this module.
 """
+
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
 import yaml
+from dotenv import load_dotenv
 
 # Load .env from the project root (works regardless of CWD if
 # the file is placed at the project root)
@@ -27,16 +28,12 @@ class Paths:
     CADDY_CSV_NEGATIVES: Path = Path(
         os.getenv("CADDY_CSV_NEGATIVES", "./data/raw/caddy/caddy_true_negatives.csv")
     )
-    ENHANCED_CACHE_DIR: Path = Path(
-        os.getenv("ENHANCED_CACHE_DIR", "./data/processed/enhanced")
-    )
+    ENHANCED_CACHE_DIR: Path = Path(os.getenv("ENHANCED_CACHE_DIR", "./data/processed/enhanced"))
     SPLITS_DIR: Path = Path(os.getenv("SPLITS_DIR", "./data/processed/splits"))
     FUNIE_GAN_WEIGHTS: Path = Path(
         os.getenv("FUNIE_GAN_WEIGHTS", "./weights/funie_gan/generator.pth")
     )
-    WATERNET_WEIGHTS: Path = Path(
-        os.getenv("WATERNET_WEIGHTS", "./weights/waternet/waternet.pth")
-    )
+    WATERNET_WEIGHTS: Path = Path(os.getenv("WATERNET_WEIGHTS", "./weights/waternet/waternet.pth"))
     RUNS_DIR: Path = Path(os.getenv("RUNS_DIR", "./runs"))
     CHECKPOINTS_DIR: Path = Path(os.getenv("CHECKPOINTS_DIR", "./checkpoints"))
 
