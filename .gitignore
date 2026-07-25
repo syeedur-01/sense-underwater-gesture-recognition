@@ -1,0 +1,43 @@
+# Virtual environment
+.venv/
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment secrets
+.env
+
+# Data (large files, never commit)
+data/raw/
+data/processed/
+
+# Weights / model binaries
+weights/*.pth
+weights/**/*.pth
+
+# Training artefacts (tensorboard logs, checkpoints)
+runs/
+checkpoints/
+
+# Jupyter
+*.ipynb_checkpoints
+.ipynb_checkpoints/
+
+# Testing / linting caches
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.eggs/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.suo
+*.user

@@ -1,0 +1,32 @@
+# configs/sense_mono.yaml
+# Phase 10 Experiment 4 ablation: SENSE in mono mode (left image only).
+# stereo.enabled: false → BiChannelEncoder uses only the left branch.
+# Note: right branch is NOT instantiated (not zeroed), for honest
+# parameter-count comparison in the stereo-vs-mono ablation study.
+
+_base_: base.yaml
+
+model:
+  backbone: efficientnet_b4
+  pretrained: true
+  out_dim: 512
+  num_classes: 16
+  shared_weights: false
+  stereo:
+    enabled: false               # ← mono mode: only left branch instantiated
+  text_guidance:
+    enabled: true
+
+data:
+  image_size: 224
+  enhancement_method: funie_gan
+  split_train: ./data/processed/splits/standard_train.csv
+  split_test: ./data/processed/splits/standard_test.csv
+
+training:
+  epochs: 50
+  batch_size: 16
+  base_lr: 1.0e-4
+  loss:
+    alpha: 0.7
+    beta: 0.3

@@ -1,0 +1,61 @@
+# configs/base.yaml
+# Shared defaults inherited/overridden by experiment-specific configs.
+# All training runs start from these unless explicitly overridden.
+
+model:
+  backbone: efficientnet_b4
+  pretrained: true
+  out_dim: 512
+  num_classes: 16
+  shared_weights: false          # whether BiChannelEncoder branches share weights
+  stereo:
+    enabled: true                # false → mono mode (left image only)
+  text_guidance:
+    enabled: true                # false → skip CrossModalFusion, use linear head
+  attention:
+    num_heads: 8
+    embed_dim: 512
+  classifier:
+    temperature: 0.07            # cosine similarity scaling
+
+data:
+  image_size: 224
+  num_classes: 16
+  enhancement_method: none       # none | funie_gan | waternet
+  num_workers: 4
+  pin_memory: true
+
+training:
+  seed: 42
+  epochs: 50
+  batch_size: 16
+  optimizer: adamw
+  base_lr: 1.0e-4
+  weight_decay: 1.0e-4
+  scheduler: cosine_annealing
+  t_max: 50                      # CosineAnnealingLR T_max (equals total epochs)
+  early_stopping_patience: 10
+  loss:
+    alpha: 0.7                   # cross-entropy weight
+    beta: 0.3                    # contrastive weight
+  # 3-phase progressive unfreezing schedule (epoch ranges, 1-indexed)
+  phases:
+    phase1:
+      epochs: [1, 10]
+      freeze_backbone: true
+      lr_scale: 1.0
+    phase2:
+      epochs: [11, 30]
+      freeze_backbone: false
+      unfreeze_last_n_blocks: 2
+      lr_scale: 0.1
+    phase3:
+      epochs: [31, 50]
+      freeze_backbone: false
+      unfreeze_last_n_blocks: null   # null = unfreeze all
+      lr_scale: 0.01
+
+logging:
+  tensorboard: true
+  log_every_n_steps: 10
+  checkpoint_every_n_epochs: 1
