@@ -10,17 +10,32 @@ __pycache__/
 # Environment secrets
 .env
 
-# Data (large files, never commit)
-data/raw/
-data/processed/
+# Data (large dataset files ignored, directory structure & .gitkeep preserved)
+data/raw/*
+!data/raw/.gitkeep
+!data/raw/*/
+data/raw/caddy/*
+!data/raw/caddy/.gitkeep
 
-# Weights / model binaries
+data/processed/*
+!data/processed/.gitkeep
+!data/processed/*/
+data/processed/enhanced/*
+!data/processed/enhanced/.gitkeep
+data/processed/splits/*
+!data/processed/splits/.gitkeep
+
+# Pretrained weights binaries (placeholders preserved)
 weights/*.pth
 weights/**/*.pth
+!weights/funie_gan/.gitkeep
+!weights/waternet/.gitkeep
 
-# Training artefacts (tensorboard logs, checkpoints)
-runs/
-checkpoints/
+# Training artefacts (tensorboard logs, checkpoints ignored; placeholders preserved)
+runs/*
+!runs/.gitkeep
+checkpoints/*
+!checkpoints/.gitkeep
 
 # Jupyter
 *.ipynb_checkpoints

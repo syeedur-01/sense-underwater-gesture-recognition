@@ -14,7 +14,7 @@ SENSE is a bi-channel EfficientNet-B4 stereo encoder pipeline for recognising 15
 2. **Stereo depth fusion** — independent left/right EfficientNet-B4 branches fused via self-attention.
 3. **Semantic text guidance** — cross-modal attention between visual features and CADDIAN class text embeddings (sentence-BERT), followed by a cosine-similarity classification head.
 
-Baselines targeted: Yang et al. (90.08% GoogleLeNet), DARE (95.87% / 92% min-class), VT-UHGR.
+Baselines targeted: Yang et al. (90.08% GoogleLeNet / 88.59% ResNet), DARE (95.87% overall / 92% min-class), VT-UHGR.
 
 ---
 
@@ -118,12 +118,12 @@ python scripts/check_env.py
 **Expected output (example):**
 ```
 Python: 3.10.11 (...)
-Platform: Windows-11-...
+Platform: Windows-10-...
 PyTorch: 2.5.1+cu121
 CUDA available: True
 CUDA device: NVIDIA GeForce RTX 4060 Laptop GPU
 CUDA capability: (8, 9)
-VRAM (GB): 8.19
+VRAM (GB): 8.59
 ```
 
 > 🚫 If `CUDA available: False`, **stop here** — do not proceed. Verify your NVIDIA driver
@@ -165,7 +165,7 @@ sense-project/
 ├── pyproject.toml                  # black / ruff config
 ├── .pre-commit-config.yaml
 ├── README.md                       # this file
-├── sense_plan_md.md                # full implementation blueprint
+├── Final_plan.md                   # full implementation blueprint
 ├── data/
 │   ├── raw/
 │   │   └── caddy/                  # untouched original CADDY files (git-ignored)
@@ -216,10 +216,12 @@ sense-project/
 │   ├── baseline_transfer_learning.yaml
 │   ├── sense_full.yaml             # primary SENSE experiment
 │   ├── sense_no_enhancement.yaml   # ablation: no FUnIE-GAN
+│   ├── sense_waternet.yaml         # ablation: WaterNet enhancement
 │   ├── sense_mono.yaml             # ablation: mono mode
 │   └── sense_no_text.yaml          # ablation: no text guidance
 ├── notebooks/
-│   └── 00_data_exploration.ipynb
+│   ├── README.md                    # describes notebook purposes (00-07)
+│   └── (analysis notebooks created in later phases)
 ├── tests/
 │   ├── test_env_smoke.py           # P0.13 environment smoke tests
 │   ├── test_data.py                # Phase 2 data pipeline tests
@@ -279,23 +281,19 @@ python scripts/evaluate.py --checkpoint checkpoints/sense_final_standard_split.p
 - **Cause:** NVIDIA driver does not support CUDA 12.x.
 - **Fix:** Update driver to ≥ 525. Check with `nvidia-smi` — look for "CUDA Version" ≥ 12.1 in the header.
 
-### PyTorch version conflict with `requirements.txt`
+### PyTorch version bounds in `requirements.txt`
 
-- **Cause:** `requirements.txt` specifies `torch>=2.2,<2.3` but the cu121 wheel installs 2.5.x.
-- **Status:** This is intentional — the wheel index provides a version within the compatible
-  range for the CUDA toolkit. The `<2.3` pin in requirements.txt is a soft constraint; the
-  cu121 wheel takes precedence. Run `pip check` to confirm no actual conflicts.
+- **Status:** `requirements.txt` specifies `torch>=2.2,<2.6` and `torchvision>=0.17,<0.21`, which is fully compatible with the `torch-2.5.1+cu121` wheel. Always install PyTorch with the `--index-url https://download.pytorch.org/whl/cu121` wheel index first before running `pip install -r requirements.txt`. Run `pip check` to confirm no version conflicts exist.
 
 ### `pre-commit run --all-files` fails on new files
 
-- **Cause:** Skeleton files may have style issues.
+- **Cause:** Skeleton files may have formatting or import ordering issues.
 - **Fix:** Run `black .` then `ruff check . --fix` to auto-fix, then re-run pre-commit.
 
 ### Out of Memory (OOM) during training
 
 - **Cause:** Batch size too large for 8 GB VRAM.
-- **Fix:** Reduce `training.batch_size` in the YAML config (try 8 or 4). Alternatively,
-  enable gradient checkpointing in Phase 6 (`trainer.py`).
+- **Fix:** Reduce `training.batch_size` in the YAML config (try 8 or 4). Alternatively, enable gradient checkpointing in Phase 6 (`trainer.py`).
 
 ---
 
@@ -305,17 +303,17 @@ python scripts/evaluate.py --checkpoint checkpoints/sense_final_standard_split.p
 |-------|-------------|-----------------|
 | 0 | Bootstrap & Environment Setup | Working CUDA environment |
 | 1 | Data Acquisition & Auditing | CADDY dataset on disk |
-| 2 | Data Pipeline | `CaddyStereoDataset`, splits |
+| 2 | Data Pipeline, EDA & Preprocessing | `CaddyStereoDataset`, splits |
 | 3 | Enhancement Integration | Cached FUnIE-GAN/WaterNet images |
 | 4 | Baseline Reproduction | Yang et al. accuracy reproduced |
-| 5 | SENSE Model | Full model, all ablation modes |
+| 5 | SENSE Model Construction | Full model, all ablation modes |
 | 6 | Training Infrastructure | Trainer, checkpointing, logging |
-| 7 | Training (Standard Split) | `sense_final_standard_split.pth` |
+| 7 | Training & Hyperparameter Strategy | `sense_final_standard_split.pth` |
 | 8 | Evaluation Framework | Metrics, confusion matrices |
-| 9 | Cross-Scenario Study | 8-fold scenario robustness results |
+| 9 | Cross-Scenario Study (LOSO) | 8-fold scenario robustness results |
 | 10 | Ablation Studies | Enhancement / stereo / text ablations |
 | 11 | Comparative Analysis | Final comparison vs DARE / VT-UHGR |
 | 12 | Results Packaging | Thesis-ready tables and figures |
 | 13 | Reproducibility & Handover | Frozen configs, tagged release |
 
-See `sense_plan_md.md` for full task-level detail on every phase.
+See `Final_plan.md` for full task-level detail on every phase.
