@@ -158,7 +158,6 @@ sense-project/
 ├── .venv/                          # git-ignored
 ├── .env                            # git-ignored (copy from .env.example)
 ├── .env.example                    # committed — template for .env
-├── .python-version                 # locks Python 3.10.x for pyenv
 ├── .gitignore
 ├── requirements.txt
 ├── requirements-dev.txt
