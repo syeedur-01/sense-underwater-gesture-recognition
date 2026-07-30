@@ -14,8 +14,9 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 import pandas as pd  # noqa: E402
+from sklearn.model_selection import train_test_split  # noqa: E402
 
-from src.config import Paths  # noqa: E402
+from src.config import SEED, Paths  # noqa: E402
 
 SCENARIOS = [
     "biograd-A",
@@ -110,7 +111,74 @@ def build_manifest(
     return manifest
 
 
+def make_standard_split(
+    manifest: pd.DataFrame | None = None,
+    val_size: float = 0.15,
+    test_size: float = 0.15,
+    seed: int = SEED,
+    output_dir: Path | str | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Standard train/validation/test split (70/15/15, stratified by gesture_id).
+
+    Chained stratification:
+      1. Split manifest into remainder (85%) and test (15%), stratified by gesture_id.
+      2. Split remainder into train (70% total) and val (15% total), stratified by gesture_id.
+
+    Saves:
+      standard_train.csv, standard_val.csv, standard_test.csv under output_dir.
+    """
+    if manifest is None:
+        manifest_path = Path("data/processed/manifest.csv")
+        if not manifest_path.exists():
+            manifest = build_manifest(output_path=manifest_path)
+        else:
+            manifest = pd.read_csv(manifest_path)
+
+    # 1. Carve off test set (15% of total, stratified)
+    remainder, df_test = train_test_split(
+        manifest,
+        test_size=test_size,
+        stratify=manifest["gesture_id"],
+        random_state=seed,
+    )
+
+    # 2. Carve off val set from remainder (val_size / (1 - test_size) fraction, stratified)
+    val_relative = val_size / (1.0 - test_size)
+    df_train, df_val = train_test_split(
+        remainder,
+        test_size=val_relative,
+        stratify=remainder["gesture_id"],
+        random_state=seed,
+    )
+
+    # Anti-leakage checks (pairwise intersections must be empty)
+    s_train = set(df_train["sample_id"])
+    s_val = set(df_val["sample_id"])
+    s_test = set(df_test["sample_id"])
+
+    assert len(s_train & s_val) == 0, f"Overlap between train and val: {len(s_train & s_val)}"
+    assert len(s_train & s_test) == 0, f"Overlap between train and test: {len(s_train & s_test)}"
+    assert len(s_val & s_test) == 0, f"Overlap between val and test: {len(s_val & s_test)}"
+
+    out_dir = Path(output_dir or Paths.SPLITS_DIR)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    df_train.to_csv(out_dir / "standard_train.csv", index=False)
+    df_val.to_csv(out_dir / "standard_val.csv", index=False)
+    df_test.to_csv(out_dir / "standard_test.csv", index=False)
+
+    return df_train, df_val, df_test
+
+
 if __name__ == "__main__":
     out_file = Path("data/processed/manifest.csv")
-    df = build_manifest(output_path=out_file)
-    print(f"Manifest built successfully: {len(df):,} rows -> {out_file}")
+    manifest_df = build_manifest(output_path=out_file)
+    print(f"Manifest built successfully: {len(manifest_df):,} rows -> {out_file}")
+
+    train_df, val_df, test_df = make_standard_split(manifest=manifest_df)
+    print(
+        f"Standard split built: Train={len(train_df):,} ({len(train_df)/len(manifest_df):.1%}), "
+        f"Val={len(val_df):,} ({len(val_df)/len(manifest_df):.1%}), "
+        f"Test={len(test_df):,} ({len(test_df)/len(manifest_df):.1%})"
+    )
