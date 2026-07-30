@@ -90,20 +90,20 @@ def test_stereo_augmentation_consistency():
     img_right = img_left.copy()
 
     # 1. Train transforms: verify exact identity on identical stereo inputs
-    train_tf = train_transforms(image_size=320)
+    train_tf = train_transforms(image_size=240)
     augmented = train_tf(image=img_left, image_right=img_right)
 
     left_t = augmented["image"]
     right_t = augmented["image_right"]
 
-    assert left_t.shape == (3, 320, 320)
-    assert right_t.shape == (3, 320, 320)
+    assert left_t.shape == (3, 240, 240)
+    assert right_t.shape == (3, 240, 240)
     assert torch.equal(
         left_t, right_t
     ), "Stereo augmentation parameters differed between left and right images!"
 
     # 2. Eval transforms: verify determinism across repeated calls
-    eval_tf = eval_transforms(image_size=320)
+    eval_tf = eval_transforms(image_size=240)
     out1 = eval_tf(image=img_left, image_right=img_right)
     out2 = eval_tf(image=img_left, image_right=img_right)
 
