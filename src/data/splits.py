@@ -171,6 +171,81 @@ def make_standard_split(
     return df_train, df_val, df_test
 
 
+def make_scenario_splits(
+    manifest: pd.DataFrame | None = None,
+    val_fraction: float = 0.15,
+    seed: int = SEED,
+    output_dir: Path | str | None = None,
+) -> dict[int, tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]]:
+    """
+    Scenario-aware Leave-One-Scenario-Out (LOSO) splits (8 folds).
+
+    Per fold i (1..8):
+      - Held-out scenario is the test set in full.
+      - Pooled data from remaining 7 scenarios is stratified-split into train/val
+        (val_fraction of the pooled subset).
+
+    Saves:
+      scenario_holdout_{i}_train.csv, scenario_holdout_{i}_val.csv, scenario_holdout_{i}_test.csv
+      for i in 1..8 under output_dir.
+    """
+    if manifest is None:
+        manifest_path = Path("data/processed/manifest.csv")
+        if not manifest_path.exists():
+            manifest = build_manifest(output_path=manifest_path)
+        else:
+            manifest = pd.read_csv(manifest_path)
+
+    out_dir = Path(output_dir or Paths.SPLITS_DIR)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    folds = {}
+
+    for idx, scen_name in enumerate(SCENARIOS):
+        fold_num = idx + 1  # 1-indexed (1..8)
+
+        # Test set is the held-out scenario in full
+        df_test = manifest[manifest["scenario"] == scen_name].copy()
+
+        # Remaining 7 scenarios pooled
+        remainder = manifest[manifest["scenario"] != scen_name].copy()
+
+        # Stratified split of pooled remaining scenarios into train and val
+        df_train, df_val = train_test_split(
+            remainder,
+            test_size=val_fraction,
+            stratify=remainder["gesture_id"],
+            random_state=seed,
+        )
+
+        # Programmatic verification checks
+        assert set(df_test["scenario"]) == {
+            scen_name
+        }, f"Fold {fold_num}: test set contains scenarios other than {scen_name}"
+        assert scen_name not in set(
+            df_train["scenario"]
+        ), f"Fold {fold_num}: train set contains held-out scenario {scen_name}"
+        assert scen_name not in set(
+            df_val["scenario"]
+        ), f"Fold {fold_num}: val set contains held-out scenario {scen_name}"
+
+        s_train = set(df_train["sample_id"])
+        s_val = set(df_val["sample_id"])
+        s_test = set(df_test["sample_id"])
+
+        assert len(s_train & s_val) == 0, f"Fold {fold_num}: train ∩ val overlap"
+        assert len(s_train & s_test) == 0, f"Fold {fold_num}: train ∩ test overlap"
+        assert len(s_val & s_test) == 0, f"Fold {fold_num}: val ∩ test overlap"
+
+        df_train.to_csv(out_dir / f"scenario_holdout_{fold_num}_train.csv", index=False)
+        df_val.to_csv(out_dir / f"scenario_holdout_{fold_num}_val.csv", index=False)
+        df_test.to_csv(out_dir / f"scenario_holdout_{fold_num}_test.csv", index=False)
+
+        folds[fold_num] = (df_train, df_val, df_test)
+
+    return folds
+
+
 if __name__ == "__main__":
     out_file = Path("data/processed/manifest.csv")
     manifest_df = build_manifest(output_path=out_file)
@@ -182,3 +257,6 @@ if __name__ == "__main__":
         f"Val={len(val_df):,} ({len(val_df)/len(manifest_df):.1%}), "
         f"Test={len(test_df):,} ({len(test_df)/len(manifest_df):.1%})"
     )
+
+    loso_folds = make_scenario_splits(manifest=manifest_df)
+    print(f"LOSO scenario splits built: 8 folds ({len(loso_folds)*3} CSV files saved).")
