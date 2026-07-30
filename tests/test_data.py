@@ -142,3 +142,23 @@ def test_dataloader_batch_iteration(sample_manifest_df: pd.DataFrame):
     assert batch["label"].shape == (b_size,)
     assert batch["scenario_id"].shape == (b_size,)
     assert len(batch["sample_id"]) == b_size
+
+
+def test_class_weight_computation():
+    """P2.8 Verification: verify compute_class_weights on synthetic imbalanced and balanced data."""
+    from src.data.splits import compute_class_weights
+
+    # 1. Imbalanced data: minority class (1) gets higher weight than majority class (0)
+    df_imbalanced = pd.DataFrame({"gesture_id": [0] * 100 + [1] * 10})
+    w_imb = compute_class_weights(df_imbalanced, num_classes=2)
+
+    assert isinstance(w_imb, torch.FloatTensor)
+    assert len(w_imb) == 2
+    assert (w_imb > 0).all() and torch.isfinite(w_imb).all()
+    assert w_imb[1] > w_imb[0]  # Minority class receives higher weight
+
+    # 2. Balanced data: weights are uniform (≈1.0)
+    df_balanced = pd.DataFrame({"gesture_id": [0] * 50 + [1] * 50})
+    w_bal = compute_class_weights(df_balanced, num_classes=2)
+
+    assert torch.allclose(w_bal, torch.tensor([1.0, 1.0], dtype=torch.float32), atol=1e-4)

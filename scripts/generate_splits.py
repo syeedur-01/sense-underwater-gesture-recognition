@@ -36,6 +36,7 @@ from src.config import SEED, Paths  # noqa: E402
 from src.data.splits import (  # noqa: E402
     SCENARIOS,
     build_manifest,
+    export_standard_class_weights_md,
     make_scenario_splits,
     make_standard_split,
 )
@@ -83,6 +84,15 @@ def main() -> None:
             f"test={len(te):>4} | train={len(tr):>5} | val={len(va):>4}"
         )
     print(f"      Saved to: {SPLITS_DIR}/scenario_holdout_{{1..8}}_{{train,val,test}}.csv")
+
+    # ----------------------------------------------------------------
+    # 4. Export class weights reference doc
+    # ----------------------------------------------------------------
+    print("\n[4/4] Exporting class weights reference (class_weights_standard.md) ...")
+    export_standard_class_weights_md(
+        train_csv_path=SPLITS_DIR / "standard_train.csv",
+        output_md_path=Path("data/processed/class_weights_standard.md"),
+    )
 
     # ----------------------------------------------------------------
     # Summary
