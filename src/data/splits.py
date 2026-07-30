@@ -247,16 +247,7 @@ def make_scenario_splits(
 
 
 if __name__ == "__main__":
-    out_file = Path("data/processed/manifest.csv")
-    manifest_df = build_manifest(output_path=out_file)
-    print(f"Manifest built successfully: {len(manifest_df):,} rows -> {out_file}")
+    # This module is a library — use scripts/generate_splits.py to regenerate all CSVs.
+    # Run: python scripts/generate_splits.py
 
-    train_df, val_df, test_df = make_standard_split(manifest=manifest_df)
-    print(
-        f"Standard split built: Train={len(train_df):,} ({len(train_df)/len(manifest_df):.1%}), "
-        f"Val={len(val_df):,} ({len(val_df)/len(manifest_df):.1%}), "
-        f"Test={len(test_df):,} ({len(test_df)/len(manifest_df):.1%})"
-    )
-
-    loso_folds = make_scenario_splits(manifest=manifest_df)
-    print(f"LOSO scenario splits built: 8 folds ({len(loso_folds)*3} CSV files saved).")
+    raise SystemExit("Run 'python scripts/generate_splits.py' to generate manifests and splits.")
