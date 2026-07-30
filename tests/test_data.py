@@ -76,3 +76,38 @@ def test_dataset_getitem_shapes(sample_manifest_df: pd.DataFrame):
     # Verify sample ID string
     assert isinstance(item["sample_id"], str)
     assert item["sample_id"].startswith(("pos_", "neg_"))
+
+
+def test_stereo_augmentation_consistency():
+    """P2.5 Verification: verify stereo transform parameter identity and eval determinism."""
+    import numpy as np
+
+    from src.data.transforms import eval_transforms, train_transforms
+
+    np.random.seed(42)
+    # Generate identical left and right test image arrays
+    img_left = np.random.randint(0, 256, (480, 640, 3), dtype=np.uint8)
+    img_right = img_left.copy()
+
+    # 1. Train transforms: verify exact identity on identical stereo inputs
+    train_tf = train_transforms(image_size=320)
+    augmented = train_tf(image=img_left, image_right=img_right)
+
+    left_t = augmented["image"]
+    right_t = augmented["image_right"]
+
+    assert left_t.shape == (3, 320, 320)
+    assert right_t.shape == (3, 320, 320)
+    assert torch.equal(
+        left_t, right_t
+    ), "Stereo augmentation parameters differed between left and right images!"
+
+    # 2. Eval transforms: verify determinism across repeated calls
+    eval_tf = eval_transforms(image_size=320)
+    out1 = eval_tf(image=img_left, image_right=img_right)
+    out2 = eval_tf(image=img_left, image_right=img_right)
+
+    assert torch.equal(out1["image"], out2["image"]), "Eval transforms are not deterministic!"
+    assert torch.equal(
+        out1["image_right"], out2["image_right"]
+    ), "Eval transforms are not deterministic!"
