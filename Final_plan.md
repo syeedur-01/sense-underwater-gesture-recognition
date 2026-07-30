@@ -582,9 +582,9 @@ Phase 1 complete.
 - Verification: `tests/test_data.py::test_dataset_getitem_shapes` — correct tensor shapes and valid label range.
 
 **P2.5 — Stereo-consistent augmentation pipeline**
-- Steps: Albumentations-based `train_transforms()` / `eval_transforms()`. Any spatial augmentation (flip, crop) is applied **identically** to left and right images within a sample — never independently randomized per side, or stereo correspondence breaks.
+- Steps: Implement `train_transforms(image_size)` / `eval_transforms(image_size)` in Albumentations using `additional_targets={"image_right": "image"}`, so every transform in a single `Compose` call — spatial and photometric alike — samples one set of parameters and applies it identically to both stereo images; this is the mechanism enforcing the "identical on left/right" rule, not a manual per-side loop. `image_size` matches the EfficientNet-B4 backbone's expected input resolution (confirm via `timm`'s `default_cfg`; record the exact value in `configs/base.yaml`). Default `train_transforms()` pipeline, in order: `RandomResizedCrop(scale=(0.85, 1.0), ratio=(0.9, 1.1))` → `Rotate(limit=12, border_mode=BORDER_CONSTANT, p=0.5)` → `ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05, p=0.5)` → `GaussianBlur(blur_limit=(3, 5), p=0.15)` → `GaussNoise(var_limit=(5.0, 20.0), p=0.15)` → `Normalize` (ImageNet mean/std, matching the pretrained backbone) → `ToTensorV2`. `eval_transforms()` is `Resize` → `Normalize` → `ToTensorV2` only — no randomness. Deliberately excluded, with this rationale recorded in a comment at the top of the file: **horizontal flip** (risks corrupting any direction-dependent CADDIAN gesture label and does not correctly preserve stereo geometry — check `DATASET_SCHEMA.md` before ever reconsidering); **CLAHE or any other contrast/enhancement-style operation** (would contaminate the `none` arm of Experiment 3/H2 — contrast/enhancement stays exclusively a Phase 3 concern, never folded into the on-the-fly augmentation pipeline); **synthetic underwater color-cast jitter and cutout/random erasing** (both considered and deferred — the former risks confounding the enhancement ablation the same way CLAHE would, the latter risks erasing the gesturing hand); **class-conditional augmentation intensity** (deliberately rejected in favor of one uniform policy for every class, to avoid two interacting class-frequency-dependent mechanisms — the actual imbalance mitigation lives in P2.9 instead).
 - Deliverable: `src/data/transforms.py`.
-- Verification: `tests/test_data.py::test_stereo_augmentation_consistency` — synthetic identical left/right pair, confirm identical transformation applied to both.
+- Verification: `tests/test_data.py::test_stereo_augmentation_consistency` — synthetic identical left/right pair, confirm identical transformation applied to both; a second assertion confirms `eval_transforms()` is fully deterministic (bit-identical output across repeated calls on the same input).
 
 **P2.6 — `DataLoader` factory**
 - Steps: `get_dataloader(split_csv, batch_size, shuffle, num_workers, transform)`, `pin_memory=True`.
@@ -601,14 +601,20 @@ Phase 1 complete.
 - Deliverable: Executed notebook, plus `data/processed/split_validation_report.md` summarizing pass/fail on every leakage check.
 - Verification: Report explicitly states zero leakage detected across both the standard split and all 8 LOSO folds; any failed check blocks progression to Phase 3.
 
+**P2.9 — Class-imbalance mitigation utility**
+- Steps: `src/data/splits.py::compute_class_weights(train_csv_path, num_classes=16)` — computes inverse-frequency class weights from the given split's `gesture_id` distribution (`weight_c = N_total / (num_classes * count_c)`, normalized to mean 1.0), returned as a tensor indexed by class ID. This is a general-purpose utility, called fresh by every training run against whichever train split that run actually uses (Phase 7's standard split, each of Phase 9's 8 LOSO folds, each of Phase 10's ablation arms) — it is never a single frozen file reused across runs with different train-set class distributions. As a documented reference tied to the headline results, also compute and save `data/processed/class_weights_standard.md` — the weights for `standard_train.csv` specifically, with a one-line cross-reference to `eda_findings.md`'s imbalance finding.
+- Deliverable: `compute_class_weights()` in `src/data/splits.py`, `data/processed/class_weights_standard.md`.
+- Verification: `tests/test_data.py::test_class_weight_computation` — on a synthetic imbalanced CSV, the minority class receives the highest weight and all weights are strictly positive and finite; on a synthetic balanced CSV, weights are ≈uniform (all ≈1.0), confirming the mechanism is harmless when imbalance is absent.
+
 ### Phase 2 Deliverables Checklist
 - [ ] EDA completed and documented before split generation
 - [ ] `manifest.csv` built and validated
 - [ ] Standard 70/15/15 stratified split created, leakage-checked
 - [ ] 8 LOSO train/val/test triples created, leakage-checked
 - [ ] `CaddyStereoDataset` implemented and unit-tested
-- [ ] Stereo-consistent augmentation implemented and unit-tested
+- [ ] Stereo-consistent augmentation implemented per the fixed default pipeline and unit-tested, including determinism check
 - [ ] `DataLoader` factory working
+- [ ] Class-imbalance mitigation utility (`compute_class_weights()`) implemented and unit-tested, `class_weights_standard.md` produced
 - [ ] Preprocessing and split-validation notebooks executed with saved outputs
 
 **Phase 2 exit criterion:** `pytest tests/test_data.py` passes; `split_validation_report.md` shows zero leakage across every split; EDA findings are on record and explicitly referenced by the splitting decisions made.
@@ -622,17 +628,18 @@ Phase 1 complete.
 ### Tasks
 - P3.1 / P3.2 — Acquire and document pretrained FUnIE-GAN and WaterNet weights (source URLs recorded in `weights/*/SOURCE.md` — required for citability).
 - P3.3 / P3.4 — `FUnIEGANEnhancer` / `WaterNetEnhancer` inference wrappers, shape- and range-tested.
-- P3.5 — `scripts/cache_enhanced_images.py`: precompute and cache `none` / `funie_gan` / `waternet` variants for the **entire** dataset (never run GAN inference inside the training loop).
-- P3.6 — Visual QA notebook section comparing raw vs. both enhancement methods across all 8 scenarios (folded into `notebooks/01_preprocessing.ipynb`, see Notebooks section).
+- P3.5 — `scripts/cache_enhanced_images.py`: precompute and cache `none` / `funie_gan` / `waternet` variants for the **entire** dataset (never run GAN inference inside the training loop), written to `{ENHANCED_CACHE_DIR}/{method}/{sample_id}_{left|right}.png` — one subdirectory per method, filenames keyed to the same `sample_id` used in `manifest.csv`. After caching, the script runs two programmatic checks and writes `data/processed/enhancement_report.md`: (1) **completeness** — for every `sample_id` in `manifest.csv`, confirm a file exists in all three method subdirectories for both `left` and `right`; any missing file is listed by `sample_id` in the report, never silently dropped; (2) **stereo-pair integrity** — confirm the cached `left`/`right` filenames for every `sample_id` still correspond to that same `sample_id` after caching (guards against the two independent per-image processing passes — FUnIE-GAN/WaterNet are monocular — silently desynchronizing a pair). The report also records processing time/rate per variant.
+- P3.6 — Visual QA notebook section comparing raw vs. both enhancement methods across all 8 scenarios (folded into `notebooks/01_preprocessing.ipynb`, see Notebooks section), extended with quantitative image statistics — mean brightness, contrast (pixel std), and a histogram — computed for a sample of images per scenario/method. Flag any enhanced image whose histogram std falls below 20% of its raw counterpart's as a possible degenerate GAN output, and list any flagged samples explicitly rather than relying on eyeballing the notebook alone.
 - P3.7 — Wire `enhancement_method` config flag into `CaddyStereoDataset`.
 
 ### Phase 3 Deliverables Checklist
 - [ ] Both enhancer wrappers implemented, tested, weights documented
-- [ ] All three cached variants exist for the full dataset
-- [ ] Visual QA performed
+- [ ] All three cached variants exist for the full dataset, verified complete against `manifest.csv` (not just spot-checked), documented in `enhancement_report.md`
+- [ ] Stereo-pair integrity confirmed intact after caching for every sample
+- [ ] Visual QA performed, backed by quantitative brightness/contrast/histogram statistics with a defined degenerate-output threshold
 - [ ] Config-level switch verified
 
-**Phase 3 exit criterion:** All three cached image sets exist; dataset loads any of them via config; QA confirms sane (non-degenerate) outputs.
+**Phase 3 exit criterion:** All three cached image sets exist for every sample in `manifest.csv` (verified programmatically, not just present as folders); `enhancement_report.md` confirms zero missing files and zero stereo-pair mismatches; dataset loads any variant via config; QA confirms sane, quantitatively-checked outputs with no unflagged degenerate cases.
 
 ---
 
@@ -643,7 +650,7 @@ Reproduce a known literature result (Yang et al. transfer learning) on the exact
 
 ### Tasks
 - P4.1 — `SingleImageClassifier` (ResNet18/GoogleLeNet via `timm`, ImageNet-pretrained, 16-way head).
-- P4.2 — Minimal training loop, `configs/baseline_transfer_learning.yaml`, left-image only, standard split's **train** for fitting and **val** for monitoring (test untouched).
+- P4.2 — Minimal training loop, `configs/baseline_transfer_learning.yaml` (`training.loss.class_weighted: false` — see P6.1's note on preserving literature comparability), left-image only, standard split's **train** for fitting and **val** for monitoring (test untouched).
 - P4.3 — Evaluate once on **test**, compare to literature (90.08% / 88.59%), record in `data/processed/baseline_results.md`.
 - P4.4 — Build and execute `notebooks/03_baseline_experiment_analysis.ipynb` (full contents in the Notebooks section below), consuming P4.2/P4.3's logged metrics and checkpoint: baseline training/validation loss & accuracy curves, checkpoint analysis, baseline performance summary table.
 
@@ -694,9 +701,9 @@ Phase 5 complete.
 ### Tasks
 
 **P6.1 — Combined loss function**
-- Steps: `SenseLoss` = `alpha * CrossEntropy + beta * ContrastiveLoss` (InfoNCE-style image-text contrastive term). Gracefully degrades to CE-only when `text_guidance.enabled=False`.
+- Steps: `SenseLoss` = `alpha * CrossEntropy + beta * ContrastiveLoss` (InfoNCE-style image-text contrastive term). `CrossEntropy` accepts an optional `weight=` tensor from `compute_class_weights()` (P2.9), computed fresh from whichever `train_csv` the current run is using, applied when `training.loss.class_weighted: true` (default `true` for every SENSE run — Phase 7, each Phase 9 LOSO fold, each Phase 10 ablation arm — since the mechanism degrades gracefully to ≈uniform weighting on a balanced split, so leaving it on costs nothing). The Phase 4 baseline (`configs/baseline_transfer_learning.yaml`) explicitly sets `class_weighted: false` and keeps plain unweighted CE, to preserve direct comparability with the published baseline numbers it's benchmarked against (P4.3). Gracefully degrades to CE-only when `text_guidance.enabled=False`, independent of the class-weighting setting.
 - Deliverable: `src/training/losses.py`.
-- Verification: Positive, finite scalar; `.backward()` succeeds.
+- Verification: Positive, finite scalar; `.backward()` succeeds; on a synthetic imbalanced batch, weighted CE produces a numerically different loss value than unweighted CE, confirming the weight tensor is actually applied rather than silently ignored.
 
 **P6.2 — Optimizer + scheduler factory**
 - Steps: AdamW + `CosineAnnealingLR`, parameters from config.
@@ -774,7 +781,7 @@ Phase 6 complete.
 ### Tasks
 
 **P7.1 — Baseline configuration**
-- Steps: Finalize `configs/sense_full.yaml` with a single, justified starting configuration: batch size (from P5.8's VRAM budget), 50-epoch 3-phase schedule, `alpha=0.7 / beta=0.3` loss weights, `enhancement_method: funie_gan`, `stereo.enabled: true`, `text_guidance.enabled: true`, `text_guidance.encoder_type: sentence_bert`, `text_guidance.encoder_name: all-MiniLM-L6-v2`, standard split paths. This is the **baseline configuration** referred to in all later hyperparameter documentation.
+- Steps: Finalize `configs/sense_full.yaml` with a single, justified starting configuration: batch size (from P5.8's VRAM budget), 50-epoch 3-phase schedule, `alpha=0.7 / beta=0.3` loss weights, `enhancement_method: funie_gan`, `stereo.enabled: true`, `text_guidance.enabled: true`, `text_guidance.encoder_type: sentence_bert`, `text_guidance.encoder_name: all-MiniLM-L6-v2`, `training.loss.class_weighted: true`, standard split paths. This is the **baseline configuration** referred to in all later hyperparameter documentation.
 - Deliverable: Finalized `configs/sense_full.yaml`.
 - Verification: Config loads; every referenced path exists.
 
@@ -1170,6 +1177,7 @@ All saved under `results/figures/` and `results/tables/`, inventoried in `result
 | `model.text_guidance.encoder_name` | model config | string (e.g. `all-MiniLM-L6-v2`) | Specific pretrained model name/path passed to the selected `encoder_type` |
 | `model.shared_weights` | model config | `true` \| `false` | Whether the two `BiChannelEncoder` branches share weights |
 | `training.loss.alpha` / `.beta` | training config | float | CE vs. contrastive loss weighting |
+| `training.loss.class_weighted` | training config | `true` \| `false` | Whether CrossEntropy in `SenseLoss` uses inverse-frequency class weights from `compute_class_weights()` (P2.9); default `true` for all SENSE runs, `false` for the Phase 4 baseline to preserve literature comparability |
 | `training.phases` | training config | epoch ranges | 3-phase progressive unfreezing schedule boundaries |
 | `data.split.protocol` | data config | `standard` \| `loso` | Which split family (Phase 2.2 vs 2.3) a run uses |
 
