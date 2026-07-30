@@ -20,6 +20,8 @@ data/raw/caddy/*
 data/processed/*
 !data/processed/.gitkeep
 !data/processed/*/
+!data/processed/*.md
+!data/processed/*.txt
 data/processed/enhanced/*
 !data/processed/enhanced/.gitkeep
 data/processed/splits/*

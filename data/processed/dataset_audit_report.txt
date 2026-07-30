@@ -1,0 +1,136 @@
+========================================================================
+CADDY DATASET AUDIT REPORT
+========================================================================
+CADDY_ROOT       : data\raw\caddy\CADDY_gestures_complete_v2_release
+CSV_POSITIVES    : data\raw\caddy\CADDY_gestures_complete_v2_release\CADDY_gestures_all_true_positives_release_v2.csv
+CSV_NEGATIVES    : data\raw\caddy\CADDY_gestures_complete_v2_release\CADDY_gestures_all_true_negatives_release_v2.csv
+
+------------------------------------------------------------------------
+SECTION 1 — Root & CSV File Existence
+------------------------------------------------------------------------
+  ✓ CADDY_ROOT exists: data\raw\caddy\CADDY_gestures_complete_v2_release
+  ✓ Positives CSV exists (20.4 MB): data\raw\caddy\CADDY_gestures_complete_v2_release\CADDY_gestures_all_true_positives_release_v2.csv
+  ✓ Negatives CSV exists (12.8 MB): data\raw\caddy\CADDY_gestures_complete_v2_release\CADDY_gestures_all_true_negatives_release_v2.csv
+
+------------------------------------------------------------------------
+SECTION 2 — Scenario Folder Structure
+------------------------------------------------------------------------
+Scenario folders found (8):
+  biograd-A
+  biograd-B
+  biograd-C
+  brodarski-A
+  brodarski-B
+  brodarski-C
+  brodarski-D
+  genova-A
+
+  ✓ Exactly 8 scenario folders confirmed.
+
+Subfolder structure (biograd-A):
+  data\raw\caddy\CADDY_gestures_complete_v2_release\biograd-A\true_negatives
+  data\raw\caddy\CADDY_gestures_complete_v2_release\biograd-A\true_negatives\raw
+  data\raw\caddy\CADDY_gestures_complete_v2_release\biograd-A\true_positives
+  data\raw\caddy\CADDY_gestures_complete_v2_release\biograd-A\true_positives\raw
+
+Sample image filenames:
+  biograd-A_00000_left.jpg
+  biograd-A_00000_right.jpg
+  biograd-A_00001_left.jpg
+  biograd-A_00001_right.jpg
+
+------------------------------------------------------------------------
+SECTION 3 — Image File Count
+------------------------------------------------------------------------
+Total image files (all types incl. synthetic): 32858
+  .jpg: 32,858
+
+------------------------------------------------------------------------
+SECTION 4 — Positives CSV Validation
+------------------------------------------------------------------------
+Total rows (incl. synthetic): 92,390
+Columns: ['index', 'scenario', 'stereo left', 'stereo right', 'label name', 'label id', 'roi left', 'roi right', 'synthetic', 'iqa_mdm_entropy', 'iqa_mdm_d', 'iqa_mdm_dcomp', 'distortion', 'param 1', 'param 2']
+
+Real samples (synthetic==0): 9,239
+Synthetic samples: 83,151
+
+  ✓ Real positive count 9,239 within expected range.
+
+Gesture classes in real positives (16):
+  [ 0] start_comm
+  [ 1] end_comm
+  [ 2] up
+  [ 3] down
+  [ 4] photo
+  [ 5] backwards
+  [ 6] carry
+  [ 7] boat
+  [ 8] here
+  [ 9] mosaic
+  [10] num_delimiter
+  [11] one
+  [12] two
+  [13] three
+  [14] four
+  [15] five
+
+  ✓ Exactly 16 gesture classes confirmed.
+
+  ✓ No nulls in critical columns (gesture, label_id, scenario, stereo paths).
+
+Real positive samples per scenario:
+  biograd-A: 1,728
+  biograd-B: 975
+  biograd-C: 1,805
+  brodarski-A: 227
+  brodarski-B: 87
+  brodarski-C: 773
+  brodarski-D: 324
+  genova-A: 3,320
+
+------------------------------------------------------------------------
+SECTION 5 — Negatives CSV Validation
+------------------------------------------------------------------------
+Total rows (incl. synthetic): 71,900
+Columns: ['index', 'scenario', 'stereo left', 'stereo right', 'selected img', 'label name', 'label id', 'roi params', 'synthetic', 'distortion type', 'dist. param 1', 'dist. param 2']
+
+Real samples (synthetic==0): 7,190
+Synthetic samples: 64,710
+
+  ✓ Real negative count 7,190 within expected range.
+  ✓ All negative samples have label_id == -1 (no-gesture).
+
+Real negative samples per scenario:
+  biograd-A: 1,313
+  biograd-B: 797
+  biograd-C: 1,487
+  brodarski-A: 220
+  brodarski-B: 70
+  brodarski-C: 212
+  brodarski-D: 304
+  genova-A: 2,787
+
+------------------------------------------------------------------------
+SECTION 6 — Referenced File Existence Check (real images only)
+------------------------------------------------------------------------
+Total .jpg files indexed from disk: 32,858
+
+Positives — missing left images: 0 / 9,239
+  ✓ All positive left image references found on disk.
+
+Negatives — missing left images: 0 / 7,190
+  ✓ All negative left image references found on disk.
+
+========================================================================
+AUDIT SUMMARY
+========================================================================
+  Total real positive stereo pairs : 9,239
+  Total real negative stereo pairs : 7,190
+  Total real stereo pairs combined : 16,429
+  Scenario folders                 : 8
+  Gesture classes (positive)       : 16
+  No-gesture class                 : 1 (label_id=-1, negatives CSV)
+  Total classes (model output)     : 17
+
+RESULT: ✓ ALL CHECKS PASSED — dataset is clean and ready for Phase 2.
+========================================================================
