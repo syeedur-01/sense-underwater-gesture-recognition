@@ -149,6 +149,48 @@ pytest tests/test_env_smoke.py -v
 **Expected:** 4 tests pass. The first run will download model weights for `all-MiniLM-L6-v2`
 (~90 MB) and EfficientNet-B4 pretrained weights — internet access required once.
 
+### 9. Download and verify the CADDY dataset
+
+Download the CADDY dataset from the official release (see Phase 1 in `Final_plan.md`),
+extract it into `data/raw/caddy/`, then update your `.env` with the correct paths.
+
+Verify dataset integrity:
+
+```bash
+python scripts/verify_dataset.py
+```
+
+**Expected:** All checks pass with zero integrity errors.
+
+### 10. Generate data manifests and splits
+
+Split CSVs are **not** tracked in Git (they are git-ignored as generated artefacts).
+After downloading the dataset, regenerate them with a single command:
+
+```bash
+python scripts/generate_splits.py
+```
+
+This generates the following files under `data/processed/`:
+
+| File | Description |
+|---|---|
+| `manifest.csv` | Full canonical manifest (16,429 real stereo pairs) |
+| `splits/standard_train.csv` | Standard split — 70% training set (11,499 rows) |
+| `splits/standard_val.csv` | Standard split — 15% validation set (2,465 rows) |
+| `splits/standard_test.csv` | Standard split — 15% test set (2,465 rows) |
+| `splits/scenario_holdout_1_*.csv` | LOSO fold 1 — held-out: `biograd-A` |
+| `splits/scenario_holdout_2_*.csv` | LOSO fold 2 — held-out: `biograd-B` |
+| `splits/scenario_holdout_3_*.csv` | LOSO fold 3 — held-out: `biograd-C` |
+| `splits/scenario_holdout_4_*.csv` | LOSO fold 4 — held-out: `brodarski-A` |
+| `splits/scenario_holdout_5_*.csv` | LOSO fold 5 — held-out: `brodarski-B` |
+| `splits/scenario_holdout_6_*.csv` | LOSO fold 6 — held-out: `brodarski-C` |
+| `splits/scenario_holdout_7_*.csv` | LOSO fold 7 — held-out: `brodarski-D` |
+| `splits/scenario_holdout_8_*.csv` | LOSO fold 8 — held-out: `genova-A` |
+
+> **Reproducibility note:** The script uses `SEED=42` (set in `.env`). Re-running it on the
+> same dataset always produces identical splits.
+
 ---
 
 ## Directory Structure
@@ -205,6 +247,8 @@ sense-project/
 ├── scripts/
 │   ├── check_env.py                # P0.6 GPU/CUDA verification
 │   ├── verify_dataset.py           # P1.2 dataset integrity checker
+│   ├── generate_splits.py          # P2.1-P2.3 regenerate all manifests & splits
+│   ├── run_eda.py                  # P2.0 standalone EDA computation script
 │   ├── cache_enhanced_images.py    # P3.5 GAN enhancement caching
 │   ├── train.py                    # main training entry point (--config)
 │   ├── evaluate.py                 # evaluation script (--checkpoint --split)
