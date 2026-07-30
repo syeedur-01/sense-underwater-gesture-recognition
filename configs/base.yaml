@@ -19,7 +19,7 @@ model:
     temperature: 0.07            # cosine similarity scaling
 
 data:
-  image_size: 240
+  image_size: 224
   num_classes: 16
   enhancement_method: none       # none | funie_gan | waternet
   num_workers: 4

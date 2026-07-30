@@ -55,7 +55,7 @@ def main():
     img_right = np.array(Image.open(right_path).convert("RGB"))
 
     # Apply train augmentation
-    train_tf = train_transforms(image_size=240)
+    train_tf = train_transforms(image_size=224)
     aug = train_tf(image=img_left, image_right=img_right)
     aug_left = aug["image"].numpy().transpose(1, 2, 0)
     aug_right = aug["image_right"].numpy().transpose(1, 2, 0)
@@ -67,7 +67,7 @@ def main():
     aug_right_disp = np.clip(aug_right * std + mean, 0, 1)
 
     # Apply eval preprocessing
-    eval_tf = eval_transforms(image_size=240)
+    eval_tf = eval_transforms(image_size=224)
     eval_out = eval_tf(image=img_left, image_right=img_right)
     eval_left = eval_out["image"].numpy().transpose(1, 2, 0)
 
@@ -76,7 +76,7 @@ def main():
     # ----------------------------------------------------------------
     fig, axes = plt.subplots(2, 2, figsize=(10, 8))
     fig.suptitle(
-        f"P2.7 — Stereo Pair Preprocessing: Raw (640x480) vs. Augmented (240x240)\n"
+        f"P2.7 — Stereo Pair Preprocessing: Raw (640x480) vs. Augmented (224x224)\n"
         f"Sample: {sample['sample_id']} | Scenario: {sample['scenario']} | "
         f"Label: {sample['gesture_label']}",
         fontsize=11,
@@ -91,11 +91,11 @@ def main():
     axes[0, 1].axis("off")
 
     axes[1, 0].imshow(aug_left_disp)
-    axes[1, 0].set_title("Augmented Left Image (240x240)", fontsize=10)
+    axes[1, 0].set_title("Augmented Left Image (224x224)", fontsize=10)
     axes[1, 0].axis("off")
 
     axes[1, 1].imshow(aug_right_disp)
-    axes[1, 1].set_title("Augmented Right Image (240x240)", fontsize=10)
+    axes[1, 1].set_title("Augmented Right Image (224x224)", fontsize=10)
     axes[1, 1].axis("off")
 
     plt.tight_layout()

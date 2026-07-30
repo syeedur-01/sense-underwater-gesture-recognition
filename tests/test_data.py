@@ -90,20 +90,20 @@ def test_stereo_augmentation_consistency():
     img_right = img_left.copy()
 
     # 1. Train transforms: verify exact identity on identical stereo inputs
-    train_tf = train_transforms(image_size=240)
+    train_tf = train_transforms(image_size=224)
     augmented = train_tf(image=img_left, image_right=img_right)
 
     left_t = augmented["image"]
     right_t = augmented["image_right"]
 
-    assert left_t.shape == (3, 240, 240)
-    assert right_t.shape == (3, 240, 240)
+    assert left_t.shape == (3, 224, 224)
+    assert right_t.shape == (3, 224, 224)
     assert torch.equal(
         left_t, right_t
     ), "Stereo augmentation parameters differed between left and right images!"
 
     # 2. Eval transforms: verify determinism across repeated calls
-    eval_tf = eval_transforms(image_size=240)
+    eval_tf = eval_transforms(image_size=224)
     out1 = eval_tf(image=img_left, image_right=img_right)
     out2 = eval_tf(image=img_left, image_right=img_right)
 
@@ -127,7 +127,7 @@ def test_dataloader_batch_iteration(sample_manifest_df: pd.DataFrame):
         batch_size=4,
         shuffle=False,
         num_workers=0,  # Single-process for unit test
-        transform=eval_transforms(image_size=240),
+        transform=eval_transforms(image_size=224),
         caddy_root=caddy_root,
     )
 
@@ -137,8 +137,8 @@ def test_dataloader_batch_iteration(sample_manifest_df: pd.DataFrame):
     assert "label" in batch and "scenario_id" in batch and "sample_id" in batch
 
     b_size = min(4, len(sample_manifest_df))
-    assert batch["left"].shape == (b_size, 3, 240, 240)
-    assert batch["right"].shape == (b_size, 3, 240, 240)
+    assert batch["left"].shape == (b_size, 3, 224, 224)
+    assert batch["right"].shape == (b_size, 3, 224, 224)
     assert batch["label"].shape == (b_size,)
     assert batch["scenario_id"].shape == (b_size,)
     assert len(batch["sample_id"]) == b_size

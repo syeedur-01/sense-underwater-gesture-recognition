@@ -23,7 +23,7 @@ from albumentations.pytorch import ToTensorV2
 
 
 def train_transforms(
-    image_size: tuple[int, int] | int = 240,
+    image_size: tuple[int, int] | int = 224,
 ) -> A.Compose:
     """
     Returns stereo-consistent training augmentation pipeline.
@@ -51,7 +51,7 @@ def train_transforms(
 
 
 def eval_transforms(
-    image_size: tuple[int, int] | int = 240,
+    image_size: tuple[int, int] | int = 224,
 ) -> A.Compose:
     """
     Returns deterministic evaluation preprocessing pipeline (Resize -> Normalize -> ToTensorV2).
