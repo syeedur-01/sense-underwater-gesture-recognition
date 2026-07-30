@@ -111,3 +111,34 @@ def test_stereo_augmentation_consistency():
     assert torch.equal(
         out1["image_right"], out2["image_right"]
     ), "Eval transforms are not deterministic!"
+
+
+def test_dataloader_batch_iteration(sample_manifest_df: pd.DataFrame):
+    """P2.6 Verification: verify get_dataloader iterates batches with expected tensor shapes."""
+    caddy_root = Path(Paths.CADDY_ROOT)
+    if not caddy_root.exists():
+        pytest.skip(f"CADDY_ROOT not found at {caddy_root}")
+
+    from src.data.caddy_dataset import get_dataloader
+    from src.data.transforms import eval_transforms
+
+    loader = get_dataloader(
+        df_or_path=sample_manifest_df,
+        batch_size=4,
+        shuffle=False,
+        num_workers=0,  # Single-process for unit test
+        transform=eval_transforms(image_size=240),
+        caddy_root=caddy_root,
+    )
+
+    batch = next(iter(loader))
+
+    assert "left" in batch and "right" in batch
+    assert "label" in batch and "scenario_id" in batch and "sample_id" in batch
+
+    b_size = min(4, len(sample_manifest_df))
+    assert batch["left"].shape == (b_size, 3, 240, 240)
+    assert batch["right"].shape == (b_size, 3, 240, 240)
+    assert batch["label"].shape == (b_size,)
+    assert batch["scenario_id"].shape == (b_size,)
+    assert len(batch["sample_id"]) == b_size

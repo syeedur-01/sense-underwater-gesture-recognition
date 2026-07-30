@@ -106,3 +106,50 @@ class CaddyStereoDataset(Dataset):
             "scenario_id": int(row["scenario_id"]),
             "sample_id": str(row["sample_id"]),
         }
+
+
+def get_dataloader(
+    df_or_path: pd.DataFrame | str | Path,
+    batch_size: int = 16,
+    shuffle: bool = True,
+    num_workers: int = 4,
+    transform: Callable | None = None,
+    caddy_root: str | Path | None = None,
+    enhanced_dir: str | Path | None = None,
+    pin_memory: bool = True,
+    sampler: torch.utils.data.Sampler | None = None,
+) -> torch.utils.data.DataLoader:
+    """
+    DataLoader factory function for CaddyStereoDataset.
+
+    Args:
+        df_or_path: DataFrame or Path/str to a split CSV manifest.
+        batch_size: Batch size for DataLoader.
+        shuffle: Whether to shuffle samples (ignored if sampler is provided).
+        num_workers: Number of worker processes.
+        transform: Albumentations or callable transform pipeline.
+        caddy_root: Root directory of extracted CADDY raw dataset.
+        enhanced_dir: Directory containing cached enhanced images (Phase 3).
+        pin_memory: If True, copies Tensors into CUDA pinned memory.
+        sampler: Optional Sampler (e.g. WeightedRandomSampler for P2.9).
+
+    Returns:
+        Configured PyTorch DataLoader instance.
+    """
+    dataset = CaddyStereoDataset(
+        df_or_path=df_or_path,
+        caddy_root=caddy_root,
+        transform=transform,
+        enhanced_dir=enhanced_dir,
+    )
+
+    should_shuffle = shuffle if sampler is None else False
+
+    return torch.utils.data.DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=should_shuffle,
+        sampler=sampler,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+    )
