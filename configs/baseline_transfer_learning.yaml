@@ -1,14 +1,14 @@
 # configs/baseline_transfer_learning.yaml
-# Phase 4 baseline: Yang et al. style single-image transfer learning.
+# Phase 4 baseline: single-image ResNet18 transfer learning.
 # Single image (left only), no stereo, no enhancement, no text guidance.
-# Uses GoogleLeNet/Inception-v1 backbone to mirror the original paper setup.
+# Uses ResNet18 backbone for architectural consistency as a standard baseline.
 
 _base_: base.yaml   # conceptual inheritance; loader merges with base defaults
 
 model:
-  backbone: inception_v3         # mirrors Yang et al. GoogleLeNet setup via timm
+  backbone: resnet18             # standard baseline; architecturally consistent reference
   pretrained: true
-  num_classes: 16
+  num_classes: 17                # 16 gesture classes (IDs 0–15) + true_neg (ID 16)
   stereo:
     enabled: false               # single-image baseline — no right branch
   text_guidance:
@@ -18,7 +18,8 @@ data:
   image_size: 224
   enhancement_method: none       # raw images only, matching Yang et al. setup
   split_train: ./data/processed/splits/standard_train.csv
-  split_test: ./data/processed/splits/standard_test.csv
+  split_val:   ./data/processed/splits/standard_val.csv
+  split_test:  ./data/processed/splits/standard_test.csv
   use_left_only: true            # explicitly use only left image
 
 training:
