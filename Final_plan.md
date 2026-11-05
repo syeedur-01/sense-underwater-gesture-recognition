@@ -32,7 +32,7 @@ This pass corrects the specific issues identified in the final implementation-re
 
 ## Project Snapshot
 
-- **Goal:** Robust underwater diver gesture recognition on the CADDY stereo-vision dataset (15 gestures + no-gesture, 8 real-world scenarios).
+- **Goal:** Robust underwater diver gesture recognition on the CADDY stereo-vision dataset (16 gesture classes + no-gesture (17 classes total) = 17 classes total, 8 real-world scenarios).
 - **Model:** SENSE — bi-channel EfficientNet-B4 stereo encoder → self-attention refinement → cross-modal attention fusion with CADDIAN class text embeddings → cosine-similarity classification head.
 - **Baselines:** Yang et al. transfer learning (90.08% GoogleLeNet / 88.59% ResNet), DARE (95.87% overall / 92% min-class), VT-UHGR (best purely-visual comparator, exact % not published).
 - **Novelty type:** Combinational/integrative — first pipeline combining (a) underwater image enhancement preprocessing, (b) explicit stereo depth fusion, (c) semantic text guidance, evaluated with (d) systematic cross-scenario robustness testing on CADDY.
@@ -56,7 +56,7 @@ Each hypothesis is directly testable by an experiment already defined later in t
 
 - **H1 (→ Experiment 2, Phase 9).** SENSE trained and evaluated with systematic Leave-One-Scenario-Out (LOSO) protocol will show measurably lower accuracy on scenarios exhibiting the most severe turbidity/low-light degradation than on the clearest scenarios, confirming that aggregate (non-scenario-stratified) accuracy reported by prior work (DARE, VT-UHGR) masks real robustness gaps.
 - **H2 (→ Experiment 3, Phase 10).** Underwater image enhancement (FUnIE-GAN/WaterNet) preprocessing will produce a larger accuracy gain in harder scenarios than in easier ones — i.e., the benefit of enhancement is not uniform but widens under degradation. This is tested via a **standard-split, per-scenario breakdown** (see the Phase 10 methodology note), which compares module performance across scenarios using models trained on data from all 8 scenarios — it is **not** a true LOSO holdout result and is not interpreted as one. Rejection of this hypothesis (a flat, uniform benefit) is a legitimate and reportable outcome, not a failed experiment.
-- **H3 (→ Experiment 4, Phase 10).** Stereo (bi-channel) fusion will improve accuracy disproportionately on gesture classes that are known to be visually ambiguous from a single 2D projection (e.g., gestures differing primarily by finger/thumb depth ordering), rather than uniformly across all 15 classes.
+- **H3 (→ Experiment 4, Phase 10).** Stereo (bi-channel) fusion will improve accuracy disproportionately on gesture classes that are known to be visually ambiguous from a single 2D projection (e.g., gestures differing primarily by finger/thumb depth ordering), rather than uniformly across all 16 gesture classes.
 - **H4 (→ Experiment 5, Phase 10).** Semantic text guidance will narrow the accuracy gap between SENSE and a visual-only ablation more under harder scenarios than under easier ones, consistent with text embeddings acting as a degradation-invariant anchor rather than a purely additive feature. As with H2, this is tested via a **standard-split, per-scenario breakdown**, not a true LOSO holdout result (see the Phase 10 methodology note).
 
 ---
@@ -376,7 +376,7 @@ Nothing. This is the starting point.
          with open(path, "r") as f:
              return yaml.safe_load(f)
      ```
-  2. Create `configs/base.yaml` with shared defaults (image size, num_classes=16, batch_size, etc.) that experiment-specific configs inherit/override.
+  2. Create `configs/base.yaml` with shared defaults (image size, num_classes=17, batch_size, etc.) that experiment-specific configs inherit/override.
 - Deliverable: `src/config.py`, `configs/base.yaml`.
 - Verification: `python -c "from src.config import Paths, SEED; print(Paths.CADDY_ROOT, SEED)"` runs without error.
 
@@ -519,9 +519,9 @@ Phase 0 complete.
 - Verification: Reported image count is consistent with the paper's stated ~9,191 positive + ~7,190 negative stereo pairs (small discrepancies are acceptable across dataset releases; flag anything off by more than a few percent). Scenario folder count is exactly 8.
 
 **P1.3 — Parse and validate CSV annotations**
-- Steps: Identify the canonical CSVs — the ones bundled inside the extracted complete-release archive — and load them with Pandas inside `scripts/verify_dataset.py`. If standalone CSVs were also downloaded separately and confirmed identical (per P1.1), they may be discarded; do not maintain two copies as sources of truth. Validate: no missing gesture labels, exactly 15 gesture classes + no-gesture in the negatives file, every filename referenced in either CSV actually exists on disk at its real extracted path, and the scenario field has exactly 8 unique values.
+- Steps: Identify the canonical CSVs — the ones bundled inside the extracted complete-release archive — and load them with Pandas inside `scripts/verify_dataset.py`. If standalone CSVs were also downloaded separately and confirmed identical (per P1.1), they may be discarded; do not maintain two copies as sources of truth. Validate: no missing gesture labels, exactly 16 gesture classes (IDs 0–15) in the positives file + no-gesture in the negatives file, every filename referenced in either CSV actually exists on disk at its real extracted path, and the scenario field has exactly 8 unique values.
 - Deliverable: Validation report printed and saved to `data/processed/dataset_audit_report.txt`.
-- Verification: Zero "missing file" errors; scenario count == 8; gesture class count == 15 (+1 negative class).
+- Verification: Zero "missing file" errors; scenario count == 8; gesture class count == 16 (+1 negative class `true_neg`).
 
 **P1.4 — Document dataset schema**
 - Steps: Write `data/processed/DATASET_SCHEMA.md` describing: CSV column meanings, the actual folder layout found during extraction (including any nesting), the left/right image pairing convention (naming pattern linking a left image to its right counterpart), and a scenario ID → scenario description mapping (which of the 8 scenario folders correspond to which physical conditions — e.g., clear water, turbid, low light — extracted from the CADDY paper or release metadata, never guessed). List all 8 scenario folder names explicitly by their real names (e.g., `brodarski-D`, `genova-A`, etc.).
@@ -602,7 +602,7 @@ Phase 1 complete.
 - Verification: Report explicitly states zero leakage detected across both the standard split and all 8 LOSO folds; any failed check blocks progression to Phase 3.
 
 **P2.9 — Class-imbalance mitigation utility**
-- Steps: `src/data/splits.py::compute_class_weights(train_csv_path, num_classes=16)` — computes inverse-frequency class weights from the given split's `gesture_id` distribution (`weight_c = N_total / (num_classes * count_c)`, normalized to mean 1.0), returned as a tensor indexed by class ID. This is a general-purpose utility, called fresh by every training run against whichever train split that run actually uses (Phase 7's standard split, each of Phase 9's 8 LOSO folds, each of Phase 10's ablation arms) — it is never a single frozen file reused across runs with different train-set class distributions. As a documented reference tied to the headline results, also compute and save `data/processed/class_weights_standard.md` — the weights for `standard_train.csv` specifically, with a one-line cross-reference to `eda_findings.md`'s imbalance finding.
+- Steps: `src/data/splits.py::compute_class_weights(train_csv_path, num_classes=17)` — computes inverse-frequency class weights from the given split's `gesture_id` distribution (`weight_c = N_total / (num_classes * count_c)`, normalized to mean 1.0), returned as a tensor indexed by class ID. This is a general-purpose utility, called fresh by every training run against whichever train split that run actually uses (Phase 7's standard split, each of Phase 9's 8 LOSO folds, each of Phase 10's ablation arms) — it is never a single frozen file reused across runs with different train-set class distributions. As a documented reference tied to the headline results, also compute and save `data/processed/class_weights_standard.md` — the weights for `standard_train.csv` specifically, with a one-line cross-reference to `eda_findings.md`'s imbalance finding.
 - Deliverable: `compute_class_weights()` in `src/data/splits.py`, `data/processed/class_weights_standard.md`.
 - Verification: `tests/test_data.py::test_class_weight_computation` — on a synthetic imbalanced CSV, the minority class receives the highest weight and all weights are strictly positive and finite; on a synthetic balanced CSV, weights are ≈uniform (all ≈1.0), confirming the mechanism is harmless when imbalance is absent.
 
@@ -649,9 +649,10 @@ Phase 1 complete.
 Reproduce a known literature result (Yang et al. transfer learning) on the exact Phase 2 pipeline, as a pipeline-correctness gate before any novel architecture is built on top of it.
 
 ### Tasks
-- P4.1 — `SingleImageClassifier` (ResNet18/GoogleLeNet via `timm`, ImageNet-pretrained, 16-way head).
-- P4.2 — Minimal training loop, `configs/baseline_transfer_learning.yaml` (`training.loss.class_weighted: false` — see P6.1's note on preserving literature comparability), left-image only, standard split's **train** for fitting and **val** for monitoring (test untouched).
-- P4.3 — Evaluate once on **test**, compare to literature (90.08% / 88.59%), record in `data/processed/baseline_results.md`.
+- P4.1 ► `SingleImageClassifier` (ResNet18 via `timm`, ImageNet-pretrained, 17-way head).
+- P4.2 — Minimal training loop, `configs/baseline_transfer_learning.yaml` (`training.loss.class_weighted: false` — see P6.1's note on preserving literature comparability), left-image only, standard split's **train** for fitting and **val** for monitoring (test untouched).
+  > **Checkpoint note (Fix 5):** The Phase 4 baseline trained on raw 224×224 left-only images (its own config); resolution differs from SENSE (decided in P5.8 — listed as a limitation). The checkpoint (epoch 17) was selected by **validation accuracy** (97.04 %), because the Phase 4 training loop logged accuracy only, not macro F1. This is a documented deviation from the Evaluation Strategy; it is acceptable because Phase 4 is a pipeline-correctness gate, not the headline result.
+- P4.3 — Evaluate once on **test**, compare to literature (primarily Yang et al.'s ResNet figure 88.59%; GoogLeNet 90.08% is context only — published number, not reproduced), record in `data/processed/baseline_results.md`.
 - P4.4 — Build and execute `notebooks/03_baseline_experiment_analysis.ipynb` (full contents in the Notebooks section below), consuming P4.2/P4.3's logged metrics and checkpoint: baseline training/validation loss & accuracy curves, checkpoint analysis, baseline performance summary table.
 
 ### Phase 4 Deliverables Checklist
@@ -673,12 +674,14 @@ Reproduce a known literature result (Yang et al. transfer learning) on the exact
 ### Tasks
 - P5.1 `BiChannelEncoder` (EfficientNet-B4 ×2, `shared_weights` flag from the start).
 - P5.2 `SelfAttentionBlock` (single-token + residual + LayerNorm formulation, explicitly justified in a docstring — this is a design decision, not an incidental implementation detail, and must be defensible in the thesis).
-- P5.3 `GestureTextEncoder` — implementation supports pluggable text-embedding backbones (Word2Vec / Sentence-BERT / BERT), selected entirely through `model.text_guidance.encoder_type` and `model.text_guidance.encoder_name` in the YAML config (see Appendix A) and never hardcoded in `src/models/text_encoder.py`; class names pulled from `DATASET_SCHEMA.md`, single source of truth; embeddings computed once and cached. `configs/sense_full.yaml` fixes the project default (`encoder_type: sentence_bert`, `encoder_name: all-MiniLM-L6-v2` — the same model already smoke-tested in P0.13), which is the configuration used for every headline SENSE result in this plan; this is a configuration default, not an open research variable, and Phase 10 does not introduce an encoder-comparison experiment.
+- P5.3 `GestureTextEncoder` — implementation supports pluggable text-embedding backbones (Word2Vec / Sentence-BERT / BERT), selected entirely through `model.text_guidance.encoder_type` and `model.text_guidance.encoder_name` in the YAML config (see Appendix A) and never hardcoded in `src/models/text_encoder.py`; class names pulled from `DATASET_SCHEMA.md`, single source of truth; embeddings computed once and cached. `configs/sense_full.yaml` fixes the project default (`encoder_type: sentence_bert`, `encoder_name: all-MiniLM-L6-v2` — the same model already smoke-tested in P0.13), which is the configuration used for every headline SENSE result in this plan; this is a configuration default, not an open research variable, and Phase 10 does not introduce an encoder-comparison experiment.
+  > **Fix 3 — Prompt construction:** Prompts come from `build_class_prompts(class_names, overrides)` (`src/models/text_encoder.py`): class names ordered by ID (0..16), underscores replaced by spaces, plus `model.text_guidance.class_prompt_overrides` (default: `true_neg: "no gesture"`). Raises `ValueError` if an override key is unknown, if any two prompts are identical, or if the prompt count ≠ 17. Verification: embeddings have shape (17, D); all rows distinct; `true_neg` row maps to "no gesture". Prompts are **fixed before SENSE training** and not tuned afterwards.
 - P5.4 `CrossModalFusion` (bidirectional cross-attention; gradient flow tested).
 - P5.5 `CosineSimilarityHead` (temperature scalar, fixed or learnable).
 - P5.6 Full `SENSE` assembly, forward-tested on a real Phase 2/3 batch.
 - P5.7 Ablation-mode switches (`stereo.enabled`, `text_guidance.enabled`) built as config-driven branches inside the **same** model class — required for Phase 10's ablations to be fair, apples-to-apples comparisons rather than separately-coded models that could silently diverge in implementation details.
-- P5.8 Parameter count / VRAM budget check (<7GB peak on RTX 4060 at chosen batch size).
+- P5.8 Parameter count / VRAM budget check (<7GB peak on RTX 4060 at chosen batch size).
+  > **Fix 4 — Image size decision:** The SENSE `data.image_size` is chosen here together with batch size by the VRAM check (EfficientNet-B4 native 380×380; two branches on 8 GB RTX 4060). The chosen value is recorded in `configs/base.yaml` or `configs/sense_full.yaml` and kept identical across all SENSE variants (full, no_enhancement, waternet, mono, no_text). It feeds `train_transforms(image_size)` / `eval_transforms(image_size)`. The baseline used raw 224×224 (its own config); baseline vs. SENSE will differ in resolution — this is listed as a limitation in P11.3.
 
 ### Phase 5 Deliverables Checklist
 - [ ] All five core components implemented, unit-tested, gradients confirmed flowing
@@ -987,7 +990,7 @@ Phase 8, 9, 10 complete.
 ### Tasks
 
 **P11.1 — Final comparison table**
-- Steps: Rows: Yang et al. baseline (Phase 4), DARE (literature), VT-UHGR (literature), SENSE (Phase 7/8 standard-split result, plus the LOSO mean±SD from Phase 9). Columns: overall accuracy, macro F1, min-class accuracy, enhancement used, stereo used, text guidance used, cross-scenario tested (yes/no).
+- Steps: Rows: Yang et al. baseline — ResNet18 (Phase 4; re-run through Phase 6 Trainer with macro-F1 checkpoint selection before final reporting), DARE (literature), VT-UHGR (literature), SENSE (Phase 7/8 standard-split result, plus the LOSO mean±SD from Phase 9). Columns: overall accuracy, macro F1, min-class accuracy, enhancement used, stereo used, text guidance used, cross-scenario tested (yes/no).
 - Deliverable: `results/final_comparison_table.md`.
 - Verification: Every SENSE-side number traces to a specific results file from Phases 4/8/9/10 — cited by path, never hand-typed from memory.
 

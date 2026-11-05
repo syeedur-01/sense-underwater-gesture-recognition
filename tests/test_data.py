@@ -162,3 +162,16 @@ def test_class_weight_computation():
     w_bal = compute_class_weights(df_balanced, num_classes=2)
 
     assert torch.allclose(w_bal, torch.tensor([1.0, 1.0], dtype=torch.float32), atol=1e-4)
+
+
+def test_manifest_class_count_matches_config():
+    """Fix 1 verification: manifest unique gesture_ids == 17 (matches num_classes in configs)."""
+    manifest_path = Path("data/processed/manifest.csv")
+    if not manifest_path.exists():
+        pytest.skip("manifest.csv not present — run scripts/build_manifest.py first")
+    df = pd.read_csv(manifest_path)
+    unique_classes = df["gesture_id"].nunique()
+    assert unique_classes == 17, (
+        f"Expected 17 unique gesture_ids in manifest (16 gestures + true_neg), "
+        f"found {unique_classes}"
+    )

@@ -6,12 +6,14 @@ model:
   backbone: efficientnet_b4
   pretrained: true
   out_dim: 512
-  num_classes: 16
+  num_classes: 17
   shared_weights: false          # whether BiChannelEncoder branches share weights
   stereo:
     enabled: true                # false → mono mode (left image only)
   text_guidance:
     enabled: true                # false → skip CrossModalFusion, use linear head
+    class_prompt_overrides:
+      true_neg: "no gesture"
   attention:
     num_heads: 8
     embed_dim: 512
@@ -19,8 +21,8 @@ model:
     temperature: 0.07            # cosine similarity scaling
 
 data:
-  image_size: 224
-  num_classes: 16
+  image_size: 224  # SENSE value finalised in P5.8; baseline overrides to 224
+  num_classes: 17
   enhancement_method: none       # none | funie_gan | waternet
   num_workers: 4
   pin_memory: true

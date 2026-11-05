@@ -20,8 +20,8 @@ Outputs:
     Console report (human-readable)
     data/processed/dataset_audit_report.txt (persisted copy)
 
-Phase 1 exit criterion: zero "missing file" errors, 8 scenarios, 16 gesture
-classes (15 positive + no-gesture negative).
+Phase 1 exit criterion: zero "missing file" errors, 8 scenarios, 16 positive gesture
+classes (IDs 0–15) in the positives CSV; model output = 17 (adds true_neg ID 16).
 """
 
 import io
@@ -51,7 +51,7 @@ AUDIT_REPORT_PATH = PROCESSED_DIR / "dataset_audit_report.txt"
 
 # Expected values per CADDY paper + Final_plan.md
 EXPECTED_SCENARIOS = 8
-EXPECTED_GESTURE_CLASSES = 16  # 15 positive gestures + 1 no-gesture class = 16 total
+EXPECTED_GESTURE_CLASSES = 16  # 16 positive gesture classes (IDs 0–15) in the positives CSV
 EXPECTED_POS_REAL_MIN = 8500  # allow ±~8% of 9,239 stated in paper
 EXPECTED_POS_REAL_MAX = 10000
 EXPECTED_NEG_REAL_MIN = 6500  # allow ±~10% of 7,190 stated in paper

@@ -10,7 +10,7 @@ model:
   backbone: efficientnet_b4
   pretrained: true
   out_dim: 512
-  num_classes: 16
+  num_classes: 17
   shared_weights: false
   stereo:
     enabled: false               # ← mono mode: only left branch instantiated
