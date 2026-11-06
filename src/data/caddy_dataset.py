@@ -16,6 +16,9 @@ from torch.utils.data import Dataset
 
 from src.config import Paths
 
+# Valid enhancement method identifiers (Phase 3 / P3.7).
+VALID_ENHANCEMENT_METHODS = {"none", "funie_gan", "waternet"}
+
 
 class CaddyStereoDataset(Dataset):
     """
@@ -29,6 +32,13 @@ class CaddyStereoDataset(Dataset):
             "scenario_id": int (0..7),
             "sample_id": str,
         }
+
+    Enhancement (P3.7):
+        Pass ``enhancement_method`` (one of "none" / "funie_gan" / "waternet")
+        to automatically resolve the correct cached-image subdirectory under
+        ``Paths.ENHANCED_CACHE_DIR``.  Alternatively, supply ``enhanced_dir``
+        directly.  If both are given, ``enhanced_dir`` takes precedence.
+        "none" means: use the raw CADDY images (no subdirectory lookup).
     """
 
     def __init__(
@@ -37,6 +47,7 @@ class CaddyStereoDataset(Dataset):
         caddy_root: str | Path | None = None,
         transform: Callable | None = None,
         enhanced_dir: str | Path | None = None,
+        enhancement_method: str | None = None,
     ) -> None:
         """
         Args:
@@ -44,6 +55,11 @@ class CaddyStereoDataset(Dataset):
             caddy_root: Root directory of extracted CADDY raw dataset.
             transform: Albumentations/callable transform pipeline.
             enhanced_dir: Directory containing cached enhanced images (Phase 3).
+                          Takes precedence over ``enhancement_method`` if supplied.
+            enhancement_method: One of "none", "funie_gan", "waternet".
+                                 Resolved to ``{Paths.ENHANCED_CACHE_DIR}/{method}``.
+                                 Ignored when ``enhanced_dir`` is explicitly provided.
+                                 "none" (or None) → load raw images from CADDY_ROOT.
         """
         if isinstance(df_or_path, (str, Path)):
             self.df = pd.read_csv(df_or_path)
@@ -52,42 +68,61 @@ class CaddyStereoDataset(Dataset):
 
         self.caddy_root = Path(caddy_root or Paths.CADDY_ROOT)
         self.transform = transform
-        self.enhanced_dir = Path(enhanced_dir) if enhanced_dir else None
+
+        # P3.7 — resolve enhanced_dir from config flag when not given directly.
+        if enhanced_dir is not None:
+            self.enhanced_dir: Path | None = Path(enhanced_dir)
+        elif enhancement_method is not None and enhancement_method != "none":
+            if enhancement_method not in VALID_ENHANCEMENT_METHODS:
+                raise ValueError(
+                    f"Unknown enhancement_method {enhancement_method!r}. "
+                    f"Must be one of: {sorted(VALID_ENHANCEMENT_METHODS)}"
+                )
+            self.enhanced_dir = Path(Paths.ENHANCED_CACHE_DIR) / enhancement_method
+        else:
+            self.enhanced_dir = None
 
     def __len__(self) -> int:
         return len(self.df)
 
     def _load_image(self, rel_path: str) -> np.ndarray:
-        """Load single image as RGB numpy array (H, W, 3)."""
+        """Load single image as RGB numpy array (H, W, 3) from raw CADDY root."""
         rel_str = rel_path.lstrip("/")
-
-        # Try cached enhanced image first if enhanced_dir is provided
-        if self.enhanced_dir is not None:
-            enhanced_path = self.enhanced_dir / rel_str
-            if enhanced_path.exists():
-                img = cv2.imread(str(enhanced_path))
-                if img is not None:
-                    return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-        # Fallback to raw CADDY root image
         raw_path = self.caddy_root / rel_str
         if not raw_path.exists():
             raise FileNotFoundError(f"Image not found at path: {raw_path}")
-
         img = cv2.imread(str(raw_path))
         if img is None:
             raise ValueError(f"Failed to read image at path: {raw_path}")
+        return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
+    def _load_enhanced(self, sample_id: str, side: str) -> np.ndarray | None:
+        """
+        Try to load a cached enhanced image keyed by sample_id and side.
+
+        P3.5 cache naming: ``{enhanced_dir}/{sample_id}_{side}.png``
+        Returns None if the cache directory is not configured or file is missing.
+        """
+        if self.enhanced_dir is None:
+            return None
+        cached_path = self.enhanced_dir / f"{sample_id}_{side}.png"
+        if not cached_path.exists():
+            return None
+        img = cv2.imread(str(cached_path))
+        if img is None:
+            return None
         return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
         row = self.df.iloc[idx]
+        sample_id = str(row["sample_id"])
 
         left_rel = str(row["left_path"])
         right_rel = str(row["right_path"])
 
-        img_left = self._load_image(left_rel)
-        img_right = self._load_image(right_rel)
+        # Prefer cached enhanced image; fall back to raw.
+        img_left = self._load_enhanced(sample_id, "left") or self._load_image(left_rel)
+        img_right = self._load_enhanced(sample_id, "right") or self._load_image(right_rel)
 
         if self.transform is not None:
             # Albumentations pipeline expecting image and image_right
@@ -116,6 +151,7 @@ def get_dataloader(
     transform: Callable | None = None,
     caddy_root: str | Path | None = None,
     enhanced_dir: str | Path | None = None,
+    enhancement_method: str | None = None,
     pin_memory: bool = True,
     sampler: torch.utils.data.Sampler | None = None,
 ) -> torch.utils.data.DataLoader:
@@ -130,6 +166,9 @@ def get_dataloader(
         transform: Albumentations or callable transform pipeline.
         caddy_root: Root directory of extracted CADDY raw dataset.
         enhanced_dir: Directory containing cached enhanced images (Phase 3).
+                      Takes precedence over ``enhancement_method`` if supplied.
+        enhancement_method: One of "none", "funie_gan", "waternet" (P3.7).
+                            Resolved to ``{Paths.ENHANCED_CACHE_DIR}/{method}``.
         pin_memory: If True, copies Tensors into CUDA pinned memory.
         sampler: Optional Sampler (e.g. WeightedRandomSampler for P2.9).
 
@@ -141,6 +180,7 @@ def get_dataloader(
         caddy_root=caddy_root,
         transform=transform,
         enhanced_dir=enhanced_dir,
+        enhancement_method=enhancement_method,
     )
 
     should_shuffle = shuffle if sampler is None else False

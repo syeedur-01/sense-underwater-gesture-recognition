@@ -175,3 +175,35 @@ def test_manifest_class_count_matches_config():
         f"Expected 17 unique gesture_ids in manifest (16 gestures + true_neg), "
         f"found {unique_classes}"
     )
+
+
+def test_enhancement_method_none_gives_no_enhanced_dir(sample_manifest_df):
+    """P3.7: enhancement_method='none' → enhanced_dir is None (uses raw images)."""
+    ds = CaddyStereoDataset(sample_manifest_df, enhancement_method="none")
+    assert ds.enhanced_dir is None
+
+
+def test_enhancement_method_resolves_cache_dir(sample_manifest_df):
+    """P3.7: enhancement_method resolves to ENHANCED_CACHE_DIR/{method}."""
+    from src.config import Paths
+
+    for method in ("funie_gan", "waternet"):
+        ds = CaddyStereoDataset(sample_manifest_df, enhancement_method=method)
+        expected = Path(Paths.ENHANCED_CACHE_DIR) / method
+        assert ds.enhanced_dir == expected, f"Failed for {method}"
+
+
+def test_enhancement_method_invalid_raises(sample_manifest_df):
+    """P3.7: unknown enhancement_method raises ValueError."""
+    with pytest.raises(ValueError, match="Unknown enhancement_method"):
+        CaddyStereoDataset(sample_manifest_df, enhancement_method="invalid_method")
+
+
+def test_enhancement_method_explicit_dir_takes_precedence(sample_manifest_df, tmp_path):
+    """P3.7: explicit enhanced_dir overrides enhancement_method."""
+    ds = CaddyStereoDataset(
+        sample_manifest_df,
+        enhanced_dir=tmp_path,
+        enhancement_method="funie_gan",
+    )
+    assert ds.enhanced_dir == tmp_path
