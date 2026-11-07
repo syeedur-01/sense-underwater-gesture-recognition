@@ -650,7 +650,8 @@ Reproduce a known literature result (Yang et al. transfer learning) on the exact
 
 ### Tasks
 - P4.1 ► `SingleImageClassifier` (ResNet18 via `timm`, ImageNet-pretrained, 17-way head).
-- P4.2 — Minimal training loop, `configs/baseline_transfer_learning.yaml` (`training.loss.class_weighted: false` — see P6.1's note on preserving literature comparability), left-image only, standard split's **train** for fitting and **val** for monitoring (test untouched).
+- P4.2 — Minimal training loop, `configs/baseline_transfer_learning.yaml` (`training.loss.class_weighted: false` — see P6.1's note on preserving literature comparability), left-image only, standard split's **train** for fitting and **val** for monitoring (test untouched).
+
   > **Checkpoint note (Fix 5):** The Phase 4 baseline trained on raw 224×224 left-only images (its own config); resolution differs from SENSE (decided in P5.8 — listed as a limitation). The checkpoint (epoch 17) was selected by **validation accuracy** (97.04 %), because the Phase 4 training loop logged accuracy only, not macro F1. This is a documented deviation from the Evaluation Strategy; it is acceptable because Phase 4 is a pipeline-correctness gate, not the headline result.
 - P4.3 — Evaluate once on **test**, compare to literature (primarily Yang et al.'s ResNet figure 88.59%; GoogLeNet 90.08% is context only — published number, not reproduced), record in `data/processed/baseline_results.md`.
 - P4.4 — Build and execute `notebooks/03_baseline_experiment_analysis.ipynb` (full contents in the Notebooks section below), consuming P4.2/P4.3's logged metrics and checkpoint: baseline training/validation loss & accuracy curves, checkpoint analysis, baseline performance summary table.
@@ -674,14 +675,26 @@ Reproduce a known literature result (Yang et al. transfer learning) on the exact
 ### Tasks
 - P5.1 `BiChannelEncoder` (EfficientNet-B4 ×2, `shared_weights` flag from the start).
 - P5.2 `SelfAttentionBlock` (single-token + residual + LayerNorm formulation, explicitly justified in a docstring — this is a design decision, not an incidental implementation detail, and must be defensible in the thesis).
-- P5.3 `GestureTextEncoder` — implementation supports pluggable text-embedding backbones (Word2Vec / Sentence-BERT / BERT), selected entirely through `model.text_guidance.encoder_type` and `model.text_guidance.encoder_name` in the YAML config (see Appendix A) and never hardcoded in `src/models/text_encoder.py`; class names pulled from `DATASET_SCHEMA.md`, single source of truth; embeddings computed once and cached. `configs/sense_full.yaml` fixes the project default (`encoder_type: sentence_bert`, `encoder_name: all-MiniLM-L6-v2` — the same model already smoke-tested in P0.13), which is the configuration used for every headline SENSE result in this plan; this is a configuration default, not an open research variable, and Phase 10 does not introduce an encoder-comparison experiment.
+- P5.3 `GestureTextEncoder` — implementation supports pluggable text-embedding backbones (Word2Vec / Sentence-BERT / BERT), selected entirely through `model.text_guidance.encoder_type` and `model.text_guidance.encoder_name` in the YAML config (see Appendix A) and never hardcoded in `src/models/text_encoder.py`; class names pulled from `DATASET_SCHEMA.md`, single source of truth; embeddings computed once and cached. `configs/sense_full.yaml` fixes the project default (`encoder_type: sentence_bert`, `encoder_name: all-MiniLM-L6-v2` — the same model already smoke-tested in P0.13), which is the configuration used for every headline SENSE result in this plan; this is a configuration default, not an open research variable, and Phase 10 does not introduce an encoder-comparison experiment.
+
   > **Fix 3 — Prompt construction:** Prompts come from `build_class_prompts(class_names, overrides)` (`src/models/text_encoder.py`): class names ordered by ID (0..16), underscores replaced by spaces, plus `model.text_guidance.class_prompt_overrides` (default: `true_neg: "no gesture"`). Raises `ValueError` if an override key is unknown, if any two prompts are identical, or if the prompt count ≠ 17. Verification: embeddings have shape (17, D); all rows distinct; `true_neg` row maps to "no gesture". Prompts are **fixed before SENSE training** and not tuned afterwards.
 - P5.4 `CrossModalFusion` (bidirectional cross-attention; gradient flow tested).
 - P5.5 `CosineSimilarityHead` (temperature scalar, fixed or learnable).
 - P5.6 Full `SENSE` assembly, forward-tested on a real Phase 2/3 batch.
 - P5.7 Ablation-mode switches (`stereo.enabled`, `text_guidance.enabled`) built as config-driven branches inside the **same** model class — required for Phase 10's ablations to be fair, apples-to-apples comparisons rather than separately-coded models that could silently diverge in implementation details.
-- P5.8 Parameter count / VRAM budget check (<7GB peak on RTX 4060 at chosen batch size).
-  > **Fix 4 — Image size decision:** The SENSE `data.image_size` is chosen here together with batch size by the VRAM check (EfficientNet-B4 native 380×380; two branches on 8 GB RTX 4060). The chosen value is recorded in `configs/base.yaml` or `configs/sense_full.yaml` and kept identical across all SENSE variants (full, no_enhancement, waternet, mono, no_text). It feeds `train_transforms(image_size)` / `eval_transforms(image_size)`. The baseline used raw 224×224 (its own config); baseline vs. SENSE will differ in resolution — this is listed as a limitation in P11.3.
+- P5.8 Parameter count / VRAM budget check and image-size/batch-size selection (<7GB peak on RTX 4060). Runs on the fully assembled `SENSE` model (after P5.6 and P5.7).
+
+  > **Image size and batch size decision:** The SENSE `data.image_size` and `training.batch_size` are chosen here by the VRAM check (EfficientNet-B4 native 380×380; two branches on 8 GB RTX 4060).
+  >
+  > **Selection rule:**
+  > - Probe candidate image sizes 224, 320, 380 with mixed precision.
+  > - Probe the heaviest mode (full SENSE: both EfficientNet-B4 branches, text guidance on) in training mode: forward + backward + optimizer step, using a throwaway loss and AdamW on synthetic data, since the Phase 6 trainer does not exist yet. Peak VRAM must stay under 7 GB.
+  > - Minimum batch size is 16 (the contrastive loss needs reasonably sized batches).
+  > - Choose the LARGEST candidate size that satisfies both constraints. If two sizes are close in VRAM, prefer the one with the shorter epoch time.
+  >
+  > **Outputs:** Write the probe table (size, batch size, peak VRAM, seconds per iteration) and the stated selection rule to `results/vram_probe.md`. Record the chosen values in `configs/base.yaml` or `configs/sense_full.yaml`.
+  >
+  > **Scope:** The chosen values are kept identical across all SENSE variants (full, no_enhancement, waternet, mono, no_text, and neither if added), frozen before Phase 7, and not changed after seeing results. They feed `train_transforms(image_size)` / `eval_transforms(image_size)`. The baseline used raw 224×224 (its own config); baseline vs. SENSE will differ in resolution, which is listed as a limitation in P11.3.
 
 ### Phase 5 Deliverables Checklist
 - [ ] All five core components implemented, unit-tested, gradients confirmed flowing
