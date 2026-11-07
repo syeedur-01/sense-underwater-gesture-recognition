@@ -2,6 +2,12 @@
 # Full SENSE pipeline: EfficientNet-B4 stereo encoder + self-attention +
 # cross-modal attention fusion with text embeddings + cosine-similarity head.
 # This is the primary experimental config for Phase 7 training.
+#
+# P5.7 decisions recorded here:
+#   model.shared_weights: true  (project default — both branches share weights)
+#   model.classifier.temperature: 0.07  (learnable, log-parametrized, clamped)
+#   model.classifier.learnable_temperature: true
+#   model.text_guidance.encoder_type / encoder_name: sentence_bert / all-MiniLM-L6-v2
 
 _base_: base.yaml
 
@@ -9,17 +15,29 @@ model:
   backbone: efficientnet_b4
   pretrained: true
   out_dim: 512
-  num_classes: 17
-  shared_weights: false
+  num_classes: 17             # read from config; never hardcoded in model code
+  shared_weights: true        # P5.7 decision: both branches share weights
   stereo:
     enabled: true
   text_guidance:
     enabled: true
+    encoder_type: sentence_bert        # project default (P5.3 / Fix 8)
+    encoder_name: all-MiniLM-L6-v2    # same model smoke-tested in P0.13
+    class_prompt_overrides:
+      true_neg: "no gesture"
+  attention:
+    num_heads: 8
+    embed_dim: 512
+  classifier:
+    temperature: 0.07             # initial τ; learnable (log-parametrized, clamped)
+    learnable_temperature: true   # P5.7 decision
 
 data:
-  image_size: 224
+  image_size: 224               # provisional for P5.1–P5.7; P5.8 finalises this
+  num_classes: 17
   enhancement_method: funie_gan  # use FUnIE-GAN cached enhanced images
   split_train: ./data/processed/splits/standard_train.csv
+  split_val: ./data/processed/splits/standard_val.csv
   split_test: ./data/processed/splits/standard_test.csv
 
 training:
@@ -29,3 +47,4 @@ training:
   loss:
     alpha: 0.7
     beta: 0.3
+    class_weighted: true        # inverse-frequency CE weights for all SENSE runs
