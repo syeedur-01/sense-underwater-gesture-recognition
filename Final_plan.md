@@ -10,7 +10,7 @@ This is the single source of truth for building, training, evaluating, and publi
 
 This revision strengthens the original engineering blueprint with the research methodology a thesis committee and a journal reviewer will both expect: explicit research questions and hypotheses, a defined evaluation/model-selection protocol, leakage-proof splitting (applied to P2.2/P2.3/P6.7/P7.2/P8.2/P9.1), a disciplined hyperparameter strategy, statistical validation across folds, full experiment tracking, and a complete inventory of publication artifacts. Phase 0 and Phase 1 are retained here in full, unabridged detail — identical in content to what has already been implemented and verified — so this document remains a single, complete, standalone reference rather than requiring cross-referencing an earlier draft. Nothing about the phase order, numbering, task content, or engineering philosophy has changed from what was already built or specified — this is strictly an enrichment pass from Phase 2 onward, not a rewrite.
 
-**Status note:** Phase 0 is implemented and verified as of this revision. Phase 1 onward has not yet been executed against this version — no rework or restart is required anywhere; Phase 1 simply proceeds next using the detail below.
+**Status note:** Phases 0–5 are implemented and verified. Phase 0 (environment), Phase 1 (data audit), Phase 2 (EDA, splits, pipeline), Phase 3 (enhancement cache — FUnIE-GAN and WaterNet), Phase 4 (ResNet18 baseline; GoogLeNet was not reproduced — published number only), and Phase 5 (SENSE model components, assembly, all four ablation-mode switches, and the P5.8 VRAM probe — image size frozen at 224, batch size frozen at 16 per `configs/base.yaml`). Phase 6 is next.
 
 ---
 
@@ -65,7 +65,7 @@ Each hypothesis is directly testable by an experiment already defined later in t
 
 These are the three claims this project is designed to support with evidence, referenced elsewhere in this document (e.g. the Phase 9 exit criterion, P12.3). Each maps directly to RQs/hypotheses/experiments already defined above — no new research direction is introduced here, only a naming of what already exists.
 
-- **Claim 1 — Core recognition performance.** SENSE's combinational architecture (enhancement + stereo fusion + semantic guidance) achieves the highest and most reliable recognition performance among compared methods on CADDY. Evidence: RQ1, Experiment 1 (Phase 8, standard-split result vs. Yang et al./DARE/VT-UHGR), reinforced by the ablation results (Experiments 3–5, Phase 10) showing each component's individual contribution.
+- **Claim 1 — Core recognition performance.** SENSE's combinational architecture (enhancement + stereo fusion + semantic guidance) achieves the highest and most reliable recognition performance among compared methods on CADDY. Evidence: RQ1, Experiment 1 (Phase 8, standard-split result vs. Yang et al./DARE/VT-UHGR), reinforced by the ablation results (Experiments 3–5, Phase 10) showing each component's individual contribution, and by the backbone-matched control (P10.6) which separates backbone/recipe gains from contribution gains.
 - **Claim 2 — Mechanism-specific module benefits.** Each of SENSE's three integrated components provides a targeted, mechanism-specific benefit rather than a generic accuracy bump: enhancement and semantic guidance disproportionately help under harder/degraded scenarios (RQ2/H2, RQ4/H4), while stereo fusion disproportionately helps on depth-ambiguous gesture classes (RQ3/H3). Evidence: Experiments 3, 4, and 5 (Phase 10).
 - **Claim 3 — Cross-scenario robustness benchmark.** Systematic Leave-One-Scenario-Out evaluation reveals real-world robustness gaps across CADDY's 8 scenarios that aggregate, non-scenario-stratified accuracy reporting (as used by DARE and VT-UHGR) conceals. Evidence: RQ1/H1, Experiment 2 (Phase 9).
 
@@ -331,7 +331,8 @@ Nothing. This is the starting point.
   │   ├── sense_no_enhancement.yaml
   │   ├── sense_waternet.yaml
   │   ├── sense_mono.yaml
-  │   └── sense_no_text.yaml
+  │   ├── sense_no_text.yaml
+  │   └── sense_neither.yaml
   ├── notebooks/
   │   ├── README.md                    # describes notebook purposes
   │   └── (analysis notebooks created in later phases)
@@ -439,9 +440,9 @@ Nothing. This is the starting point.
 - Steps: create `configs/base.yaml` (P0.9) plus:
   - `configs/baseline_transfer_learning.yaml` — Phase 4 baseline.
   - `configs/sense_full.yaml` — full pipeline, Phase 7.
-  - `configs/sense_no_enhancement.yaml`, `configs/sense_waternet.yaml`, `configs/sense_mono.yaml`, `configs/sense_no_text.yaml` — Phase 10 ablations (stubs acceptable at this point, filled in later). `sense_no_enhancement.yaml` sets `data.enhancement_method: none`; `sense_waternet.yaml` sets `data.enhancement_method: waternet`; the `funie_gan` arm is `sense_full.yaml` itself (no separate stub needed).
+  - `configs/sense_no_enhancement.yaml`, `configs/sense_waternet.yaml`, `configs/sense_mono.yaml`, `configs/sense_no_text.yaml`, `configs/sense_neither.yaml` — Phase 10 ablations (stubs acceptable at this point, filled in later). `sense_no_enhancement.yaml` sets `data.enhancement_method: none`; `sense_waternet.yaml` sets `data.enhancement_method: waternet`; `sense_neither.yaml` disables stereo, text guidance, and enhancement (backbone-matched control, P10.6); the `funie_gan` arm is `sense_full.yaml` itself (no separate stub needed).
   - Each config specifies `model.*`, `data.*`, `training.*`, `enhancement.enabled`, `stereo.enabled`, `text_guidance.enabled` flags so ablations are config-switches, not code forks.
-- Deliverable: All 7 YAML configs present.
+- Deliverable: All 8 YAML configs present.
 - Verification: `load_yaml_config()` successfully parses every file in `configs/`.
 
 **P0.13 — Verify the environment with a simple test script**
@@ -488,7 +489,7 @@ Nothing. This is the starting point.
 - [x] `src/config.py` functional
 - [x] Git initialized, `.gitignore` correct, bootstrap commit made
 - [x] Pre-commit hooks installed and passing
-- [x] All 7 experiment config stubs present and parseable
+- [x] All 8 experiment config stubs present and parseable
 - [x] `scripts/check_env.py` confirms CUDA + RTX 4060 detected
 - [x] `tests/test_env_smoke.py` — all tests passing
 - [x] `README.md` setup instructions verified by clean run-through
@@ -694,7 +695,7 @@ Reproduce a known literature result (Yang et al. transfer learning) on the exact
   >
   > **Outputs:** Write the probe table (size, batch size, peak VRAM, seconds per iteration) and the stated selection rule to `results/vram_probe.md`. Record the chosen values in `configs/base.yaml` or `configs/sense_full.yaml`.
   >
-  > **Scope:** The chosen values are kept identical across all SENSE variants (full, no_enhancement, waternet, mono, no_text, and neither if added), frozen before Phase 7, and not changed after seeing results. They feed `train_transforms(image_size)` / `eval_transforms(image_size)`. The baseline used raw 224×224 (its own config); baseline vs. SENSE will differ in resolution, which is listed as a limitation in P11.3.
+  > **Scope:** The chosen values are kept identical across all SENSE variants (full, no_enhancement, waternet, mono, no_text, neither), frozen before Phase 7, and not changed after seeing results. They feed `train_transforms(image_size)` / `eval_transforms(image_size)`. The probe selected 224×224, which matches the baseline's resolution — both run below EfficientNet-B4's native 380×380 due to the 8 GB VRAM budget; this is documented as a limitation in P11.3.
 
 ### Phase 5 Deliverables Checklist
 - [x] All five core components implemented, unit-tested, gradients confirmed flowing
@@ -972,20 +973,26 @@ Phase 7 (supplies the `sense_full` checkpoint reused as the `funie_gan` arm), Ph
 - Verification: Explicit accept/reject verdict on H4. A null or partial result is a legitimate, reportable finding — report it honestly rather than reframing it as support it doesn't have. State explicitly in the report that this reflects standard-split, per-scenario performance, not LOSO robustness.
 
 **P10.4 — Consolidate all ablation results**
-- Steps: `results/ablation_master_summary.md` combining Experiments 3–5's overall accuracy, macro F1, min-class accuracy deltas, and each hypothesis's verdict, ready for the thesis results chapter. Explicitly list all **four** new ablation checkpoints trained in this phase — `checkpoints/ablation_enhancement_none.pth`, `checkpoints/ablation_enhancement_waternet.pth`, `checkpoints/ablation_stereo_mono.pth`, `checkpoints/ablation_text_guidance_none.pth` — alongside the reused `checkpoints/sense_final_standard_split.pth` (the `funie_gan`/full-model arm from Phase 7).
+- Steps: `results/ablation_master_summary.md` combining Experiments 3–5 and P10.6's overall accuracy, macro F1, min-class accuracy deltas, hypothesis verdicts (H2, H3, H4), and the backbone-matched control's Claim 1 attribution, ready for the thesis results chapter. Explicitly list all **five** new ablation checkpoints trained in this phase — `checkpoints/ablation_enhancement_none.pth`, `checkpoints/ablation_enhancement_waternet.pth`, `checkpoints/ablation_stereo_mono.pth`, `checkpoints/ablation_text_guidance_none.pth`, `checkpoints/ablation_neither.pth` — alongside the reused `checkpoints/sense_final_standard_split.pth` (the `funie_gan`/full-model arm from Phase 7).
 - Deliverable: `results/ablation_master_summary.md`.
-- Verification: Every ablation arm (all four newly trained checkpoints, plus the reused full-model checkpoint) has full metrics recorded and every hypothesis (H2, H3, H4) has an explicit, evidence-backed verdict.
+- Verification: Every ablation arm (all five newly trained checkpoints, plus the reused full-model checkpoint) has full metrics recorded; every hypothesis (H2, H3, H4) has an explicit, evidence-backed verdict; the `ablation_neither.pth` arm is listed with its Claim 1 attribution role (no hypothesis verdict).
 
 **P10.5 — Ablation study notebook**
-- Steps: Build and execute `notebooks/04_ablation_study.ipynb` (full contents in the Notebooks section below), consuming `results/experiment_3_enhancement/comparison_table.csv`, `results/experiment_4_stereo/comparison_table.csv` + `per_class_gap_analysis.md`, `results/experiment_5_text_guidance/comparison_table.csv`, and `results/ablation_master_summary.md` from P10.1–P10.4 — enhancement/stereo/text-guidance ablation comparisons, full-model comparison, H2/H3/H4 verdict visualization.
+- Steps: Build and execute `notebooks/04_ablation_study.ipynb` (full contents in the Notebooks section below), consuming `results/experiment_3_enhancement/comparison_table.csv`, `results/experiment_4_stereo/comparison_table.csv` + `per_class_gap_analysis.md`, `results/experiment_5_text_guidance/comparison_table.csv`, `results/experiment_6_backbone_control/comparison_table.csv`, and `results/ablation_master_summary.md` from P10.1–P10.4 and P10.6 — enhancement/stereo/text-guidance ablation comparisons, backbone-matched control, full-model comparison, H2/H3/H4 verdict visualization.
 - Deliverable: Executed `notebooks/04_ablation_study.ipynb`.
-- Verification: Notebook runs end-to-end from already-generated P10.1–P10.4 outputs; no ablation training/evaluation logic duplicated inside the notebook.
+- Verification: Notebook runs end-to-end from already-generated P10.1–P10.4 and P10.6 outputs; no ablation training/evaluation logic duplicated inside the notebook.
+
+**P10.6 — Backbone-matched control (supports Claim 1)**
+- Steps: Train `configs/sense_neither.yaml` on the standard split with the Phase 7 schedule (EfficientNet-B4, single image, no enhancement, no text guidance). Evaluate on the standard test split with the same protocol as the other arms (macro F1, accuracy, min-class accuracy). Produce a standard-split per-scenario breakdown by grouping `standard_test.csv` samples by `scenario_id` (consistent with the Phase 10 methodology note; not a LOSO evaluation).
+- Deliverable: `checkpoints/ablation_neither.pth`, `results/experiment_6_backbone_control/comparison_table.csv`.
+- Verification: Macro F1, accuracy, and min-class accuracy recorded. The report states explicitly that this arm isolates backbone and training-recipe effects from SENSE's three contributions (enhancement, stereo fusion, text guidance), and that the ResNet18 baseline → SENSE-neither → full SENSE progression attributes the total gain to its sources. No hypothesis verdict — this arm supports Claim 1 only.
 
 ### Phase 10 Deliverables Checklist
 - [ ] Enhancement ablation trained/evaluated (2 checkpoints: `none`, `waternet`), H2 verdict recorded, explicitly labeled as standard-split per-scenario analysis (not LOSO)
 - [ ] Stereo vs. mono ablation trained/evaluated with per-class breakdown, H3 verdict recorded
 - [ ] Text guidance ablation trained/evaluated with widening-gap analysis, H4 verdict recorded, explicitly labeled as standard-split per-scenario analysis (not LOSO)
-- [ ] Master ablation summary produced, all four new ablation checkpoints listed
+- [ ] Backbone-matched control trained/evaluated (`sense_neither.yaml`), Claim 1 attribution documented
+- [ ] Master ablation summary produced, all five new ablation checkpoints listed
 - [ ] `notebooks/04_ablation_study.ipynb` executed with saved outputs
 
 **Phase 10 exit criterion:** H2, H3, and H4 each have an explicit, statistically-supported verdict, positive or negative, fully documented.
@@ -1003,17 +1010,17 @@ Phase 8, 9, 10 complete.
 ### Tasks
 
 **P11.1 — Final comparison table**
-- Steps: Rows: Yang et al. baseline — ResNet18 (Phase 4; re-run through Phase 6 Trainer with macro-F1 checkpoint selection before final reporting), DARE (literature), VT-UHGR (literature), SENSE (Phase 7/8 standard-split result, plus the LOSO mean±SD from Phase 9). Columns: overall accuracy, macro F1, min-class accuracy, enhancement used, stereo used, text guidance used, cross-scenario tested (yes/no).
+- Steps: Rows: Yang et al. baseline — ResNet18 (Phase 4; re-run through Phase 6 Trainer with macro-F1 checkpoint selection before final reporting), SENSE-neither (EfficientNet-B4, single image, no text, no enhancement; Phase 10 P10.6), DARE (literature), VT-UHGR (literature), SENSE (Phase 7/8 standard-split result, plus the LOSO mean±SD from Phase 9). Columns: overall accuracy, macro F1, min-class accuracy, enhancement used, stereo used, text guidance used, cross-scenario tested (yes/no).
 - Deliverable: `results/final_comparison_table.md`.
 - Verification: Every SENSE-side number traces to a specific results file from Phases 4/8/9/10 — cited by path, never hand-typed from memory.
 
 **P11.2 — Headline figures**
-- Steps: (a) bar chart: SENSE vs. DARE vs. VT-UHGR vs. baseline, overall + macro F1 + min-class accuracy; (b) per-scenario robustness chart (Phase 9) with error bars from the statistical summary; (c) ablation summary chart (Phase 10) with H2/H3/H4 verdicts annotated.
+- Steps: (a) bar chart: SENSE vs. DARE vs. VT-UHGR vs. baseline, overall + macro F1 + min-class accuracy; (b) per-scenario robustness chart (Phase 9) with error bars from the statistical summary; (c) ablation summary chart (Phase 10) with H2/H3/H4 verdicts annotated. The ResNet18 baseline → SENSE-neither → full SENSE progression is included in the ablation chart to attribute the total gain between backbone/recipe effects and SENSE's three contributions.
 - Deliverable: `results/figures/`, 300dpi minimum.
 - Verification: Consistent color scheme and legible labels across all figures.
 
 **P11.3 — Honest limitations section**
-- Steps: Document every case where SENSE did not outperform DARE/VT-UHGR, and every hypothesis that was rejected or only partially supported.
+- Steps: Document every case where SENSE did not outperform DARE/VT-UHGR, and every hypothesis that was rejected or only partially supported. Note that SENSE runs at 224×224 — below EfficientNet-B4's native 380×380 — due to the 8 GB VRAM budget (P5.8), and that this resolution constraint applies equally to the SENSE-neither backbone-matched control.
 - Deliverable: `results/limitations_and_honest_findings.md`.
 - Verification: Every experiment from Phases 8–10 has an entry, positive or negative — this document directly answers RQ1 with appropriate epistemic honesty.
 
@@ -1119,7 +1126,7 @@ Phase 12 complete.
 - Verification: A clean venv installing from this file reproduces exact package versions used for final results.
 
 **P13.3 — Archive checkpoints externally**
-- Steps: Export final checkpoints — standard-split (`sense_final_standard_split.pth`), 8 LOSO folds (`scenario_holdout_{1..8}_best.pth`), and all 4 ablation variants (`ablation_enhancement_none.pth`, `ablation_enhancement_waternet.pth`, `ablation_stereo_mono.pth`, `ablation_text_guidance_none.pth`) — to external storage with a manifest.
+- Steps: Export final checkpoints — standard-split (`sense_final_standard_split.pth`), 8 LOSO folds (`scenario_holdout_{1..8}_best.pth`), and all 5 ablation variants (`ablation_enhancement_none.pth`, `ablation_enhancement_waternet.pth`, `ablation_stereo_mono.pth`, `ablation_text_guidance_none.pth`, `ablation_neither.pth`) — to external storage with a manifest.
 - Deliverable: External archive + `checkpoints/ARCHIVE_MANIFEST.md`.
 - Verification: Manifest cross-references every checkpoint referenced in `final_comparison_table.md`.
 
@@ -1163,7 +1170,7 @@ All notebooks live in `notebooks/`. They are strictly for exploration, visualiza
 | `01_preprocessing.ipynb` | Phase 2/3 (P2.7, P3.6) | Raw images, augmentation pipeline visualization, enhancement (FUnIE-GAN/WaterNet) before/after comparisons, image histograms | Before/after preprocessing figures |
 | `02_dataset_split_validation.ipynb` | Phase 2 (P2.8) | Split visualization, class balance per split, scenario distribution per LOSO fold, overlap/leakage verification, LOSO visualization | `split_validation_report.md` figures |
 | `03_baseline_experiment_analysis.ipynb` | Phase 4 (P4.4) | Baseline training/validation loss & accuracy curves, checkpoint analysis, baseline performance summary | Baseline learning curves + summary table |
-| `04_ablation_study.ipynb` | Phase 10 (P10.5) | Enhancement/stereo/text-guidance ablation comparisons, full-model comparison, H2/H3/H4 verdict visualization | Ablation figures + comparison tables |
+| `04_ablation_study.ipynb` | Phase 10 (P10.5) | Enhancement/stereo/text-guidance ablation comparisons, backbone-matched control (P10.6), full-model comparison, H2/H3/H4 verdict visualization | Ablation figures + comparison tables |
 | `05_hyperparameter_analysis.ipynb` | Phase 7 (P7.5) | Learning-rate/batch-size/loss-weight comparison, early-stopping behavior analysis, best-configuration summary | Hyperparameter comparison plots + final config table |
 | `06_final_evaluation.ipynb` | Phase 8 (P8.4), 11 (P11.4) | Confusion matrix, classification report, precision/recall/macro-F1, per-class and scenario-wise performance | Final evaluation figures/tables for thesis and paper |
 | `07_robustness_analysis.ipynb` | Phase 9 (P9.5) | Scenario-wise and fold-wise performance, mean±SD/CI visualization, robustness discussion, failure-case analysis | LOSO robustness figures + statistical summary tables |
@@ -1214,7 +1221,7 @@ Use `P{phase}.{task}` IDs to request specific work, e.g.: "Implement P2.0" → b
 ## Appendix D — Final Deliverables (expanded)
 
 - Full source code (`src/`, `scripts/`, `configs/`)
-- All trained models/checkpoints (standard-split, 8 LOSO folds, 4 ablation variants: `ablation_enhancement_none.pth`, `ablation_enhancement_waternet.pth`, `ablation_stereo_mono.pth`, `ablation_text_guidance_none.pth`)
+- All trained models/checkpoints (standard-split, 8 LOSO folds, 5 ablation variants: `ablation_enhancement_none.pth`, `ablation_enhancement_waternet.pth`, `ablation_stereo_mono.pth`, `ablation_text_guidance_none.pth`, `ablation_neither.pth`)
 - All configuration files, including the immutable `results/archived_configs/` snapshot
 - Complete experiment logs (`runs/{experiment}/{timestamp}/` — config, metrics.csv, training.log, seed, runtime, GPU info, git commit, per P6.5)
 - Full TensorBoard logs
