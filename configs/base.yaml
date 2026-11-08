@@ -21,7 +21,7 @@ model:
     temperature: 0.07            # cosine similarity scaling
 
 data:
-  image_size: 224  # SENSE value finalised in P5.8; baseline overrides to 224
+  image_size: 224  # FINAL (P5.8): 380→11.21 GB, 320→8.16 GB, 224→4.46 GB — largest that fits <7 GB
   num_classes: 17
   enhancement_method: none       # none | funie_gan | waternet
   num_workers: 4

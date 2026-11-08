@@ -33,7 +33,7 @@ model:
     learnable_temperature: true   # P5.7 decision
 
 data:
-  image_size: 224               # provisional for P5.1–P5.7; P5.8 finalises this
+  image_size: 224               # FINAL — P5.8 VRAM probe: 380→11.21 GB, 320→8.16 GB, 224→4.46 GB (selected)
   num_classes: 17
   enhancement_method: funie_gan  # use FUnIE-GAN cached enhanced images
   split_train: ./data/processed/splits/standard_train.csv
