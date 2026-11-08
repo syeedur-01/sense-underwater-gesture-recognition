@@ -697,10 +697,10 @@ Reproduce a known literature result (Yang et al. transfer learning) on the exact
   > **Scope:** The chosen values are kept identical across all SENSE variants (full, no_enhancement, waternet, mono, no_text, and neither if added), frozen before Phase 7, and not changed after seeing results. They feed `train_transforms(image_size)` / `eval_transforms(image_size)`. The baseline used raw 224×224 (its own config); baseline vs. SENSE will differ in resolution, which is listed as a limitation in P11.3.
 
 ### Phase 5 Deliverables Checklist
-- [ ] All five core components implemented, unit-tested, gradients confirmed flowing
-- [ ] Full model assembled and forward-tested on real data
-- [ ] All four mode combinations (full / no-stereo / no-text / neither) tested
-- [ ] VRAM budget confirmed safe
+- [x] All five core components implemented, unit-tested, gradients confirmed flowing
+- [x] Full model assembled and forward-tested on real data
+- [x] All four mode combinations (full / no-stereo / no-text / neither) tested
+- [x] VRAM budget confirmed safe
 
 **Phase 5 exit criterion:** `pytest tests/test_models.py` passes fully; all four ablation-mode combinations run forward+backward within VRAM budget on a real batch.
 
