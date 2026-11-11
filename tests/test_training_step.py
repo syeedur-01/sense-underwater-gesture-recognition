@@ -3,6 +3,8 @@ tests/test_training_step.py
 ===========================
 Tests for Phase 6 training infrastructure.
 Stage A: P6.1 (SenseLoss, ContrastiveLoss) & P6.2 (Optimizer & Scheduler factory).
+Stage B: P6.3 (PhaseController) & P6.4 (Checkpoint).
+Stage C: P6.5 (ExperimentTracker) & P6.6 (TensorBoard) & P6.7 (Seed control).
 """
 
 from __future__ import annotations
@@ -25,6 +27,8 @@ from src.training.scheduler import (
 )
 from src.training.trainer import PhaseController
 from src.utils.checkpoint import load_checkpoint, save_checkpoint
+from src.utils.logging import ExperimentTracker
+from src.utils.seed import set_seed
 
 
 class TestContrastiveLoss:
@@ -648,3 +652,280 @@ class TestCheckpoint:
         assert (
             payload["config"]["training"]["base_lr"] == 1e-4
         ), "Config in checkpoint should not reflect post-save mutations"
+
+
+# ===========================================================================
+# Stage C — P6.5 (ExperimentTracker), P6.6 (TensorBoard), P6.7 (Seed) tests
+# ===========================================================================
+
+
+class TestSeedControl:
+    """P6.7 — Seed reproducibility tests."""
+
+    def test_same_seed_same_loss(self):
+        """
+        Required test: identical epoch-1 loss across two runs with the same seed.
+        """
+
+        def make_model():
+            return nn.Sequential(nn.Linear(16, 8), nn.ReLU(), nn.Linear(8, 4))
+
+        loss_fn = nn.CrossEntropyLoss()
+
+        def one_epoch_loss(seed: int) -> float:
+            set_seed(seed)
+            model = make_model()
+            opt = optim.SGD(model.parameters(), lr=0.1)
+            x = torch.randn(8, 16)
+            y = torch.randint(0, 4, (8,))
+            opt.zero_grad()
+            loss = loss_fn(model(x), y)
+            loss.backward()
+            opt.step()
+            return loss.item()
+
+        loss_a = one_epoch_loss(seed=99)
+        loss_b = one_epoch_loss(seed=99)
+        assert loss_a == loss_b, f"Same seed must produce same loss: {loss_a} vs {loss_b}"
+
+    def test_different_seeds_different_loss(self):
+        """Different seeds should (almost always) produce different losses."""
+
+        def make_model():
+            return nn.Sequential(nn.Linear(32, 8), nn.ReLU(), nn.Linear(8, 4))
+
+        loss_fn = nn.CrossEntropyLoss()
+
+        def one_loss(seed: int) -> float:
+            set_seed(seed)
+            model = make_model()
+            x = torch.randn(8, 32)
+            y = torch.randint(0, 4, (8,))
+            return loss_fn(model(x), y).item()
+
+        loss_a = one_loss(seed=1)
+        loss_b = one_loss(seed=2)
+        # This could theoretically collide, but essentially never will
+        assert loss_a != loss_b
+
+    def test_set_seed_sets_cudnn_flags(self):
+        """set_seed must set cudnn.deterministic=True and benchmark=False."""
+        import torch.backends.cudnn as cudnn
+
+        set_seed(42)
+        assert cudnn.deterministic is True
+        assert cudnn.benchmark is False
+
+
+class TestExperimentTracker:
+    """P6.5 / P6.6 — ExperimentTracker artifact tests."""
+
+    def _dummy_cfg(self) -> dict:
+        return {
+            "model": {"num_classes": 17},
+            "data": {"image_size": 224},
+            "training": {"seed": 42, "epochs": 1, "base_lr": 1e-4},
+        }
+
+    def test_all_nine_artifacts_present_after_1epoch_run(self, tmp_path):
+        """
+        P6.5 Verification:
+        After a 1-epoch dummy run, all nine artifacts listed in P6.5 must
+        exist and be non-empty in the run directory.
+        """
+        cfg = self._dummy_cfg()
+        tracker = ExperimentTracker(
+            experiment_name="test_sense_full",
+            cfg=cfg,
+            base_dir=tmp_path / "runs",
+        )
+        # Simulate a full 1-epoch run
+        tracker.start(seed=42)
+
+        # Fake 1-epoch checkpoint: write dummy .pth files so the
+        # artifact-presence check passes for best.pth / last.pth
+        dummy_state = {"epoch": 1, "model": {}, "metrics": {}, "config": cfg}
+        torch.save(dummy_state, tracker.best_checkpoint_path)
+        torch.save(dummy_state, tracker.last_checkpoint_path)
+
+        tracker.log_epoch(
+            epoch=1,
+            train_metrics={"loss": 1.5, "ce_loss": 1.0, "contrastive_loss": 0.5},
+            val_metrics={
+                "loss": 1.4,
+                "accuracy": 0.6,
+                "macro_f1": 0.55,
+                "min_class_accuracy": 0.3,
+            },
+            learning_rate=1e-4,
+            epoch_duration_s=1.23,
+        )
+
+        tracker.finish()
+
+        ok, missing = tracker.all_artifacts_present()
+        assert ok, f"Missing or empty artifacts: {missing}"
+
+    def test_run_directory_created_under_experiment_name(self, tmp_path):
+        """run_dir must be under runs/{experiment_name}/."""
+        tracker = ExperimentTracker(
+            experiment_name="my_run",
+            cfg=self._dummy_cfg(),
+            base_dir=tmp_path / "runs",
+        )
+        tracker.start(seed=0)
+        tracker.finish()
+        assert (tmp_path / "runs" / "my_run").is_dir()
+        assert tracker.run_dir.parent.name == "my_run"
+
+    def test_config_yaml_matches_input_cfg(self, tmp_path):
+        """config.yaml written by tracker must round-trip to the original cfg."""
+        import yaml
+
+        cfg = self._dummy_cfg()
+        tracker = ExperimentTracker(
+            experiment_name="cfg_test",
+            cfg=cfg,
+            base_dir=tmp_path / "runs",
+        )
+        tracker.start(seed=1)
+        tracker.finish()
+
+        with (tracker.run_dir / "config.yaml").open("r", encoding="utf-8") as f:
+            loaded = yaml.safe_load(f)
+        assert loaded["training"]["base_lr"] == cfg["training"]["base_lr"]
+        assert loaded["data"]["image_size"] == cfg["data"]["image_size"]
+
+    def test_metrics_csv_has_correct_columns_and_rows(self, tmp_path):
+        """metrics.csv must have one header row + one data row per logged epoch."""
+        import csv as csv_module
+
+        cfg = self._dummy_cfg()
+        tracker = ExperimentTracker(
+            experiment_name="csv_test",
+            cfg=cfg,
+            base_dir=tmp_path / "runs",
+        )
+        tracker.start(seed=2)
+
+        for ep in range(1, 4):
+            tracker.log_epoch(
+                epoch=ep,
+                train_metrics={"loss": float(ep), "ce_loss": float(ep), "contrastive_loss": 0.0},
+                val_metrics={
+                    "loss": float(ep),
+                    "accuracy": 0.5,
+                    "macro_f1": 0.5,
+                    "min_class_accuracy": 0.2,
+                },
+                learning_rate=1e-4,
+                epoch_duration_s=0.1,
+            )
+
+        # Write dummy checkpoints so finish() doesn't error
+        torch.save({}, tracker.best_checkpoint_path)
+        torch.save({}, tracker.last_checkpoint_path)
+        tracker.finish()
+
+        with (tracker.run_dir / "metrics.csv").open("r", newline="", encoding="utf-8") as f:
+            rows = list(csv_module.DictReader(f))
+
+        assert len(rows) == 3
+        expected_cols = {
+            "epoch",
+            "train_loss",
+            "train_ce_loss",
+            "train_contrastive_loss",
+            "val_loss",
+            "val_accuracy",
+            "val_macro_f1",
+            "val_min_class_accuracy",
+            "learning_rate",
+            "epoch_duration_s",
+        }
+        assert expected_cols.issubset(set(rows[0].keys()))
+        assert int(rows[0]["epoch"]) == 1
+        assert int(rows[2]["epoch"]) == 3
+
+    def test_seed_txt_contains_seed(self, tmp_path):
+        """seed.txt must contain exactly the integer seed passed to start()."""
+        tracker = ExperimentTracker(
+            experiment_name="seed_test",
+            cfg=self._dummy_cfg(),
+            base_dir=tmp_path / "runs",
+        )
+        tracker.start(seed=1337)
+        tracker.finish()
+
+        content = (tracker.run_dir / "seed.txt").read_text(encoding="utf-8").strip()
+        assert content == "1337"
+
+    def test_runtime_txt_is_non_empty_after_finish(self, tmp_path):
+        """runtime.txt must be written and non-empty after finish()."""
+        tracker = ExperimentTracker(
+            experiment_name="runtime_test",
+            cfg=self._dummy_cfg(),
+            base_dir=tmp_path / "runs",
+        )
+        tracker.start(seed=0)
+        tracker.finish()
+
+        content = (tracker.run_dir / "runtime.txt").read_text(encoding="utf-8").strip()
+        assert content  # non-empty
+        # Should parse as a float (seconds)
+        assert float(content.rstrip("s")) >= 0.0
+
+    def test_training_log_captures_logger_output(self, tmp_path):
+        """training.log must exist and contain log output after a run."""
+        cfg = self._dummy_cfg()
+        tracker = ExperimentTracker(
+            experiment_name="log_test",
+            cfg=cfg,
+            base_dir=tmp_path / "runs",
+        )
+        tracker.start(seed=5)
+        # The start() call logs a line; log_epoch logs another
+        tracker.log_epoch(
+            epoch=1,
+            train_metrics={"loss": 1.0, "ce_loss": 1.0, "contrastive_loss": 0.0},
+            val_metrics={"loss": 0.9, "accuracy": 0.7, "macro_f1": 0.65, "min_class_accuracy": 0.4},
+            learning_rate=1e-4,
+        )
+        tracker.finish()
+
+        log_text = (tracker.run_dir / "training.log").read_text(encoding="utf-8")
+        assert len(log_text) > 0
+        assert "ExperimentTracker" in log_text or "Epoch" in log_text
+
+    def test_context_manager_calls_finish(self, tmp_path):
+        """Using ExperimentTracker as context manager must call finish()."""
+        cfg = self._dummy_cfg()
+        with ExperimentTracker(
+            experiment_name="ctx_test",
+            cfg=cfg,
+            base_dir=tmp_path / "runs",
+        ) as tracker:
+            tracker.start(seed=7)
+
+        # runtime.txt is only written in finish() — if it exists, finish was called
+        assert (tracker.run_dir / "runtime.txt").exists()
+
+    def test_tensorboard_event_file_created(self, tmp_path):
+        """P6.6: At least one TensorBoard event file must be in the run_dir."""
+        cfg = self._dummy_cfg()
+        tracker = ExperimentTracker(
+            experiment_name="tb_test",
+            cfg=cfg,
+            base_dir=tmp_path / "runs",
+        )
+        tracker.start(seed=0)
+        tracker.log_epoch(
+            epoch=1,
+            train_metrics={"loss": 1.0, "ce_loss": 1.0, "contrastive_loss": 0.0},
+            val_metrics={"loss": 0.9, "accuracy": 0.7, "macro_f1": 0.6, "min_class_accuracy": 0.3},
+            learning_rate=1e-4,
+        )
+        tracker.finish()
+
+        tb_events = list(tracker.run_dir.glob("events.out.tfevents.*"))
+        assert len(tb_events) >= 1, "No TensorBoard event files found in run_dir"
