@@ -714,6 +714,10 @@ Build the reusable trainer, loss, scheduler, checkpointing, and logging systems 
 
 ### Depends on
 Phase 5 complete.
+**Prerequisite:** P8.1 (`src/evaluation/metrics.py` and `tests/test_metrics.py`) is implemented before P6.4, because
+checkpoint selection, the experiment tracker and the Trainer all need macro F1 and min-class accuracy every epoch.
+All of Phase 6 imports these from `src/evaluation/metrics.py` and never defines its own metric code. P8.1 is then
+already complete when Phase 8 starts.
 
 ### Tasks
 
@@ -856,6 +860,7 @@ Phase 7 complete.
 ### Tasks
 
 **P8.1 — Core metrics module**
+ (Implemented early as a Phase 6 prerequisite.)
 - Steps: `src/evaluation/metrics.py`:
   - `compute_overall_accuracy`
   - `compute_macro_f1` (primary metric)
@@ -884,7 +889,7 @@ Phase 7 complete.
 - Verification: Notebook runs end-to-end from P8.3's already-generated outputs; no evaluation logic duplicated inside the notebook.
 
 ### Phase 8 Deliverables Checklist
-- [ ] `metrics.py` implemented and unit-tested against hand-computed examples
+- [x] `metrics.py` implemented and unit-tested against hand-computed examples
 - [ ] `evaluate.py` generic across any checkpoint/split, test-split-only enforced by convention/note
 - [ ] Experiment 1 evaluation completed and recorded
 - [ ] `notebooks/06_final_evaluation.ipynb` created and executed (Experiment 1 portion)
