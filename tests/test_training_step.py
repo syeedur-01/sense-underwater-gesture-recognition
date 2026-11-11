@@ -5,18 +5,24 @@ Tests for Phase 6 training infrastructure.
 Stage A: P6.1 (SenseLoss, ContrastiveLoss) & P6.2 (Optimizer & Scheduler factory).
 Stage B: P6.3 (PhaseController) & P6.4 (Checkpoint).
 Stage C: P6.5 (ExperimentTracker) & P6.6 (TensorBoard) & P6.7 (Seed control).
+Stage D: P6.8 (Trainer) & P6.9 (scripts/train.py).
 """
 
 from __future__ import annotations
 
 import copy
+import subprocess
+import sys
+import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 import pytest
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.utils.data
 
 from src.data.splits import compute_class_weights
 from src.training.losses import ContrastiveLoss, SenseLoss
@@ -25,7 +31,7 @@ from src.training.scheduler import (
     build_optimizer_and_scheduler,
     build_scheduler,
 )
-from src.training.trainer import PhaseController
+from src.training.trainer import PhaseController, Trainer
 from src.utils.checkpoint import load_checkpoint, save_checkpoint
 from src.utils.logging import ExperimentTracker
 from src.utils.seed import set_seed
@@ -929,3 +935,308 @@ class TestExperimentTracker:
 
         tb_events = list(tracker.run_dir.glob("events.out.tfevents.*"))
         assert len(tb_events) >= 1, "No TensorBoard event files found in run_dir"
+
+
+# ===========================================================================
+# Stage D — P6.8 (Trainer) & P6.9 (scripts/train.py) tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Lightweight fake dataset + model for Trainer unit tests
+# (avoids loading real CADDY data or EfficientNet-B4)
+# ---------------------------------------------------------------------------
+
+
+def _make_fake_csv(tmp_path: Path, n: int = 20, num_classes: int = 4) -> Path:
+    """Write a minimal split CSV that CaddyStereoDataset can parse."""
+    rows = []
+    for i in range(n):
+        rows.append(
+            {
+                "sample_id": f"s{i:04d}",
+                "left_path": f"/fake/left_{i}.png",
+                "right_path": f"/fake/right_{i}.png",
+                "gesture_id": i % num_classes,
+                "gesture_label": f"g{i % num_classes}",
+                "scenario_id": i % 3,
+            }
+        )
+    p = tmp_path / f"{uuid.uuid4().hex}_split.csv"
+    pd.DataFrame(rows).to_csv(p, index=False)
+    return p
+
+
+def _make_tiny_cfg(num_classes: int = 4) -> dict:
+    """Return a minimal config dict for Trainer tests."""
+    return {
+        "model": {
+            "backbone": "efficientnet_b4",
+            "pretrained": False,
+            "out_dim": 32,
+            "num_classes": num_classes,
+            "shared_weights": True,
+            "stereo": {"enabled": False},
+            "text_guidance": {"enabled": False},
+            "attention": {"num_heads": 1},
+            "classifier": {"temperature": 0.07},
+        },
+        "data": {
+            "image_size": 32,
+            "num_classes": num_classes,
+            "enhancement_method": None,
+            "num_workers": 0,
+            "pin_memory": False,
+        },
+        "training": {
+            "seed": 0,
+            "epochs": 1,
+            "batch_size": 4,
+            "optimizer": "adamw",
+            "base_lr": 1e-3,
+            "weight_decay": 1e-4,
+            "scheduler": "cosine_annealing",
+            "t_max": 1,
+            "early_stopping_patience": 5,
+            "loss": {"alpha": 1.0, "beta": 0.0, "class_weighted": True},
+            "phases": {
+                "phase1": {"epochs": [1, 1], "freeze_backbone": True, "lr_scale": 1.0},
+                "phase2": {
+                    "epochs": [2, 5],
+                    "freeze_backbone": False,
+                    "unfreeze_last_n_blocks": 2,
+                    "lr_scale": 0.1,
+                },
+                "phase3": {
+                    "epochs": [6, 10],
+                    "freeze_backbone": False,
+                    "unfreeze_last_n_blocks": None,
+                    "lr_scale": 0.01,
+                },
+            },
+        },
+    }
+
+
+class FakeStereoDataset(torch.utils.data.Dataset):
+    """Tiny in-memory dataset that mimics CaddyStereoDataset output format."""
+
+    def __init__(self, n: int = 20, num_classes: int = 4, image_size: int = 32):
+        self.n = n
+        self.num_classes = num_classes
+        self.image_size = image_size
+
+    def __len__(self) -> int:
+        return self.n
+
+    def __getitem__(self, idx: int) -> dict:
+        torch.manual_seed(idx)
+        return {
+            "left": torch.randn(3, self.image_size, self.image_size),
+            "right": torch.randn(3, self.image_size, self.image_size),
+            "label": idx % self.num_classes,
+            "scenario_id": idx % 3,
+            "sample_id": f"s{idx:04d}",
+        }
+
+
+def _make_fake_loader(
+    n: int = 20, num_classes: int = 4, batch_size: int = 4
+) -> torch.utils.data.DataLoader:
+    return torch.utils.data.DataLoader(
+        FakeStereoDataset(n=n, num_classes=num_classes),
+        batch_size=batch_size,
+        shuffle=False,
+    )
+
+
+class TestTrainer:
+    """P6.8 — Trainer unit tests (using patched dataloaders to avoid disk I/O)."""
+
+    def _build_trainer(self, tmp_path: Path, num_classes: int = 4) -> Trainer:
+        """Build a Trainer with fake dataloaders patched in."""
+        from src.models.sense import SENSE
+
+        cfg = _make_tiny_cfg(num_classes)
+        train_csv = _make_fake_csv(tmp_path, n=20, num_classes=num_classes)
+        val_csv = _make_fake_csv(tmp_path, n=8, num_classes=num_classes)
+        model = SENSE.from_config(cfg)
+
+        # Patch get_dataloader so Trainer never touches disk images
+        fake_loader = _make_fake_loader(n=20, num_classes=num_classes, batch_size=4)
+        fake_val_loader = _make_fake_loader(n=8, num_classes=num_classes, batch_size=4)
+
+        with patch(
+            "src.training.trainer.get_dataloader", side_effect=[fake_loader, fake_val_loader]
+        ):
+            trainer = Trainer(
+                model=model,
+                cfg=cfg,
+                train_csv=str(train_csv),
+                val_csv=str(val_csv),
+                experiment_name="test_run",
+                device="cpu",
+            )
+        # Swap in persistent fake loaders (the patched ones are consumed during __init__)
+        trainer.train_loader = _make_fake_loader(n=20, num_classes=num_classes)
+        trainer.val_loader = _make_fake_loader(n=8, num_classes=num_classes)
+        return trainer
+
+    def test_trainer_single_epoch_loss_finite_and_checkpoint_saved(self, tmp_path):
+        """
+        P6.8 Verification: one epoch on a tiny subset completes,
+        logs correctly, saves a checkpoint, loss is finite.
+        """
+        trainer = self._build_trainer(tmp_path)
+        best = trainer.fit(num_epochs=1)
+
+        assert "macro_f1" in best
+        assert "accuracy" in best
+        assert "min_class_accuracy" in best
+        for v in best.values():
+            assert isinstance(v, float)
+            assert not (v != v)  # not NaN
+
+        # Checkpoint files must exist
+        assert trainer.tracker.last_checkpoint_path.exists()
+        assert trainer.tracker.best_checkpoint_path.exists()
+
+    def test_trainer_fit_never_opens_test_split(self, tmp_path):
+        """
+        Required test: fit() must not open/load any test-split CSV.
+        We track every pd.read_csv call and assert that none matches a test-split path.
+        """
+        trainer = self._build_trainer(tmp_path)
+        opened_paths: list[str] = []
+
+        real_read_csv = pd.read_csv
+
+        def tracked_read_csv(path_or_buf, *args, **kwargs):
+            if isinstance(path_or_buf, (str, Path)):
+                opened_paths.append(str(path_or_buf))
+            return real_read_csv(path_or_buf, *args, **kwargs)
+
+        with patch("pandas.read_csv", side_effect=tracked_read_csv):
+            trainer.fit(num_epochs=1)
+
+        # Check that no opened path contains "test" in a CSV filename
+        test_paths = [p for p in opened_paths if "test" in Path(p).stem.lower()]
+        assert len(test_paths) == 0, f"fit() accessed test-split paths: {test_paths}"
+
+    def test_trainer_class_weights_from_training_csv(self, tmp_path):
+        """
+        Required test: the weights used by the loss are computed from
+        that run's training CSV (not hardcoded or from val CSV).
+        """
+        trainer = self._build_trainer(tmp_path)
+
+        # SenseLoss should have class_weights populated from train_csv
+        # (because _make_tiny_cfg sets class_weighted: True)
+        assert (
+            trainer.loss_fn.class_weights is not None
+        ), "class_weights should be non-None when class_weighted=True"
+        # Shape: (num_classes,)
+        assert trainer.loss_fn.class_weights.shape == (4,)
+
+    def test_validate_produces_finite_metrics(self, tmp_path):
+        """validate() against val loader returns finite metric dict."""
+        trainer = self._build_trainer(tmp_path)
+        metrics = trainer.validate()
+        for key in ("loss", "accuracy", "macro_f1", "min_class_accuracy"):
+            assert key in metrics
+            assert isinstance(metrics[key], float)
+            assert not (metrics[key] != metrics[key])  # not NaN
+
+    def test_trainer_all_artifacts_present_after_fit(self, tmp_path):
+        """All nine ExperimentTracker artifacts must be present after fit()."""
+        trainer = self._build_trainer(tmp_path)
+        trainer.fit(num_epochs=1)
+
+        ok, missing = trainer.tracker.all_artifacts_present()
+        assert ok, f"Missing or empty artifacts after fit(): {missing}"
+
+
+class TestTrainScriptSmoke:
+    """
+    Stage D smoke test — P6.9 Verification:
+    Run scripts/train.py --config configs/sense_full.yaml --epochs 1
+    and confirm all nine experiment-record artifacts are produced.
+
+    This test requires the actual CADDY data CSVs and enhanced images.
+    It is marked 'slow' and skipped when data is unavailable.
+    """
+
+    def test_train_script_1epoch_smoke(self, tmp_path):
+        """
+        Run scripts/train.py for 1 epoch and verify the experiment record.
+        Requires real data to be present (skipped otherwise).
+        """
+        project_root = Path(__file__).resolve().parent.parent
+        train_csv = project_root / "data" / "processed" / "splits" / "standard_train.csv"
+        val_csv = project_root / "data" / "processed" / "splits" / "standard_val.csv"
+        config = project_root / "configs" / "sense_full.yaml"
+
+        if not train_csv.exists() or not val_csv.exists():
+            pytest.skip("Real CADDY split CSVs not available; skipping smoke test.")
+        if not config.exists():
+            pytest.skip("configs/sense_full.yaml not found.")
+
+        exp_name = f"smoke_test_{uuid.uuid4().hex[:8]}"
+        cmd = [
+            sys.executable,
+            str(project_root / "scripts" / "train.py"),
+            "--config",
+            str(config),
+            "--epochs",
+            "1",
+            "--experiment-name",
+            exp_name,
+        ]
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=str(project_root),
+            timeout=600,  # 10-minute safety cap
+        )
+
+        if result.returncode != 0:
+            pytest.fail(
+                f"train.py exited with code {result.returncode}.\n"
+                f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+            )
+
+        # Locate the most recently created run dir for this experiment
+        runs_root = project_root / "runs" / exp_name
+        assert runs_root.exists(), f"Run directory not found: {runs_root}"
+        run_dirs = sorted(runs_root.iterdir(), key=lambda d: d.stat().st_mtime)
+        assert run_dirs, f"No run sub-directories found under {runs_root}"
+        run_dir = run_dirs[-1]  # most recent
+
+        required_artifacts = [
+            "config.yaml",
+            "metrics.csv",
+            "training.log",
+            "seed.txt",
+            "runtime.txt",
+            "gpu_info.txt",
+            "git_commit.txt",
+            "checkpoints/best.pth",
+            "checkpoints/last.pth",
+        ]
+        missing = []
+        for rel in required_artifacts:
+            p = run_dir / rel
+            if not p.exists():
+                missing.append(f"{rel} (missing)")
+            elif rel != "gpu_info.txt" and p.stat().st_size == 0:
+                missing.append(f"{rel} (empty)")
+
+        # TensorBoard event file
+        tb_events = list(run_dir.glob("events.out.tfevents.*"))
+        if not tb_events:
+            missing.append("TensorBoard event file (missing)")
+
+        assert not missing, f"Smoke test: missing/empty artifacts in {run_dir}:\n" + "\n".join(
+            missing
+        )

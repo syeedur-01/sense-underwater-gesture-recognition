@@ -121,8 +121,13 @@ class CaddyStereoDataset(Dataset):
         right_rel = str(row["right_path"])
 
         # Prefer cached enhanced image; fall back to raw.
-        img_left = self._load_enhanced(sample_id, "left") or self._load_image(left_rel)
-        img_right = self._load_enhanced(sample_id, "right") or self._load_image(right_rel)
+        img_left = self._load_enhanced(sample_id, "left")
+        if img_left is None:
+            img_left = self._load_image(left_rel)
+
+        img_right = self._load_enhanced(sample_id, "right")
+        if img_right is None:
+            img_right = self._load_image(right_rel)
 
         if self.transform is not None:
             # Albumentations pipeline expecting image and image_right

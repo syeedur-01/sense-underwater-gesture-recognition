@@ -781,11 +781,11 @@ already complete when Phase 8 starts.
 - [x] Optimizer/scheduler factory implemented
 - [x] Progressive unfreezing controller implemented and tested
 - [x] Checkpointing round-trip verified
-- [ ] Full experiment tracking (`ExperimentTracker`) implemented and verified producing all nine artifacts
-- [ ] TensorBoard logging verified
-- [ ] Seed reproducibility verified
-- [ ] `Trainer` assembled, correctly separates train/val/test usage, one-epoch smoke test passes
-- [ ] `scripts/train.py` functional end-to-end
+- [x] Full experiment tracking (`ExperimentTracker`) implemented and verified producing all nine artifacts
+- [x] TensorBoard logging verified
+- [x] Seed reproducibility verified
+- [x] `Trainer` assembled, correctly separates train/val/test usage, one-epoch smoke test passes
+- [x] `scripts/train.py` functional end-to-end
 
 **Phase 6 exit criterion:** A 1-epoch smoke test of `scripts/train.py --config configs/sense_full.yaml` produces a complete, self-contained experiment record (all nine P6.5 artifacts present) and never accesses any test split.
 

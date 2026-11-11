@@ -2,29 +2,42 @@
 src/training/trainer.py
 =======================
 P6.3 — Three-phase progressive unfreezing controller (PhaseController).
+P6.8 — Trainer class: ties together dataloaders, model, loss,
+        optimizer/scheduler, PhaseController, checkpointing,
+        ExperimentTracker, and early stopping.
 
-Epoch-boundary-driven `requires_grad` toggling on BiChannelEncoder submodules,
-with optimizer parameter-group rebuild at each phase transition.
-
-Phase definitions (read from config, never hardcoded):
-  phase1: epochs [1, 10]  — backbone fully frozen, head/text/fusion trainable
-  phase2: epochs [11, 30] — last N blocks of backbone unfrozen (lr_scale=0.1)
-  phase3: epochs [31, 50] — entire backbone unfrozen (lr_scale=0.01)
-
-The PhaseController is wired into the Trainer (P6.8).  It is defined here so
-that the Trainer can import a single module.  The Trainer class itself is
-implemented in P6.8 and is a thin shell until then.
+Key invariant (P6.8):
+  .fit() trains on TRAIN and evaluates on VAL only.
+  It never opens or touches any test-split CSV.
+  .validate() is usable standalone but its docstring explicitly states it must
+  only be called against val during training/tuning; each run's designated
+  test split is reserved exclusively for its own evaluation phase.
 """
 
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
+import torch
+import torch.amp
 import torch.nn as nn
 from torch.optim import Optimizer
 
-from src.training.scheduler import build_optimizer
+from src.data.caddy_dataset import get_dataloader
+from src.data.transforms import eval_transforms, train_transforms
+from src.evaluation.metrics import (
+    compute_macro_f1,
+    compute_min_class_accuracy,
+    compute_overall_accuracy,
+    is_better_checkpoint,
+)
+from src.training.losses import SenseLoss
+from src.training.scheduler import build_optimizer, build_scheduler
+from src.utils.checkpoint import save_checkpoint
+from src.utils.logging import ExperimentTracker
+from src.utils.seed import set_seed
 
 logger = logging.getLogger(__name__)
 
@@ -293,3 +306,329 @@ class PhaseController:
         """
         optimizer = build_optimizer(model, cfg)
         return cls(model=model, cfg=cfg, optimizer=optimizer)
+
+
+# ---------------------------------------------------------------------------
+# P6.8 — Trainer
+# ---------------------------------------------------------------------------
+
+
+class Trainer:
+    """
+    P6.8 — Full SENSE training loop.
+
+    Ties together:
+      - CaddyStereoDataset dataloaders (train + val, never test)
+      - SENSE model
+      - SenseLoss (combined CE + contrastive, class-weighted)
+      - AdamW optimizer + CosineAnnealingLR scheduler
+      - PhaseController (progressive unfreezing)
+      - ExperimentTracker (nine-artifact experiment record)
+      - Checkpoint selection (best = highest val macro F1; tie-break = min-class accuracy)
+      - Early stopping (patience from config)
+
+    INVARIANT: ``.fit()`` only reads/writes train and val CSVs.
+    It **never** opens the test-split CSV or any LOSO test CSV.
+    ``validate()`` may be called against any DataLoader, but its docstring
+    makes clear that the test split must only be accessed in the dedicated
+    evaluation phase (Phase 8 / Phase 9), not during training or tuning.
+
+    Args:
+        model:           SENSE model instance (already on the correct device).
+        cfg:             Full YAML config dict (merged base + experiment).
+        train_csv:       Path to training split CSV (used for dataloading and
+                         computing class weights).
+        val_csv:         Path to validation split CSV.
+        experiment_name: Logical name for this run (used by ExperimentTracker).
+        device:          Torch device string (``"cuda"`` or ``"cpu"``).
+        resume_path:     Optional checkpoint path to resume from.
+    """
+
+    def __init__(
+        self,
+        model: nn.Module,
+        cfg: dict[str, Any],
+        train_csv: str,
+        val_csv: str,
+        experiment_name: str = "sense",
+        device: str | None = None,
+        resume_path: str | None = None,
+    ) -> None:
+        self.model = model
+        self.cfg = cfg
+        self.train_csv = str(train_csv)
+        self.val_csv = str(val_csv)
+        self.experiment_name = experiment_name
+        self.resume_path = resume_path
+
+        # Device
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = torch.device(device)
+        self.model.to(self.device)
+
+        # Training config
+        t_cfg = cfg.get("training", {})
+        self.num_epochs: int = int(t_cfg.get("epochs", 50))
+        self.batch_size: int = int(t_cfg.get("batch_size", 16))
+        self.patience: int = int(t_cfg.get("early_stopping_patience", 10))
+        self.seed: int = int(t_cfg.get("seed", 42))
+
+        # Image size from config
+        image_size: int = int(cfg.get("data", {}).get("image_size", 224))
+
+        # Enhancement method
+        enhancement_method: str | None = cfg.get("data", {}).get("enhancement_method", None)
+
+        # Number of workers / pin memory
+        num_workers: int = int(cfg.get("data", {}).get("num_workers", 4))
+        pin_memory: bool = bool(cfg.get("data", {}).get("pin_memory", True))
+
+        # Build dataloaders — ONLY train + val
+        self.train_loader = get_dataloader(
+            df_or_path=self.train_csv,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+            transform=train_transforms(image_size),
+            enhancement_method=enhancement_method,
+            pin_memory=pin_memory,
+        )
+        self.val_loader = get_dataloader(
+            df_or_path=self.val_csv,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            transform=eval_transforms(image_size),
+            enhancement_method=enhancement_method,
+            pin_memory=pin_memory,
+        )
+
+        # Build loss, optimizer, scheduler
+        # SenseLoss.from_config() internally computes class weights from train_csv
+        self.loss_fn = SenseLoss.from_config(cfg, train_csv=self.train_csv, device=self.device).to(
+            self.device
+        )
+        self.optimizer = build_optimizer(model, cfg)
+        self.scheduler = build_scheduler(self.optimizer, cfg)
+
+        # Phase controller (progressive unfreezing)
+        self.phase_ctrl = PhaseController(model=self.model, cfg=cfg, optimizer=self.optimizer)
+
+        # Experiment tracker
+        self.tracker = ExperimentTracker(
+            experiment_name=self.experiment_name,
+            cfg=self.cfg,
+        )
+
+        # Mixed precision scaler
+        use_amp = self.device.type == "cuda"
+        self.scaler = torch.amp.GradScaler(device="cuda", enabled=use_amp)
+        self.use_amp = use_amp
+
+        # State for early stopping / checkpoint selection
+        self._best_metrics: dict[str, float] = {}
+        self._epochs_no_improve: int = 0
+        self._start_epoch: int = 1
+
+        # Resume if requested
+        if resume_path is not None:
+            self._resume(resume_path)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def fit(self, num_epochs: int | None = None) -> dict[str, float]:
+        """
+        Train for ``num_epochs`` epochs (defaults to ``training.epochs`` from config).
+
+        Evaluates on the validation split at the end of every epoch.
+        NEVER accesses any test-split CSV.
+
+        Returns:
+            Best validation metrics dict (macro_f1, accuracy, min_class_accuracy).
+        """
+        set_seed(self.seed)
+        num_epochs = num_epochs if num_epochs is not None else self.num_epochs
+        self.tracker.start(seed=self.seed)
+
+        try:
+            for epoch in range(self._start_epoch, self._start_epoch + num_epochs):
+                epoch_start = time.monotonic()
+
+                # Phase transition (progressive unfreezing)
+                self.phase_ctrl.step(epoch)
+
+                # Train one epoch
+                train_metrics = self._train_epoch(epoch)
+
+                # Validate
+                val_metrics = self._validate_epoch()
+
+                # Scheduler step
+                self.scheduler.step()
+                lr = self.scheduler.get_last_lr()[0]
+
+                epoch_duration = time.monotonic() - epoch_start
+
+                # Log to tracker (CSV + TensorBoard)
+                self.tracker.log_epoch(
+                    epoch=epoch,
+                    train_metrics=train_metrics,
+                    val_metrics=val_metrics,
+                    learning_rate=lr,
+                    epoch_duration_s=epoch_duration,
+                )
+
+                # Save last checkpoint
+                save_checkpoint(
+                    path=self.tracker.last_checkpoint_path,
+                    model=self.model,
+                    epoch=epoch,
+                    metrics=val_metrics,
+                    config=self.cfg,
+                    optimizer=self.optimizer,
+                    scheduler=self.scheduler,
+                )
+
+                # Save best checkpoint if improved
+                if self._is_improved(val_metrics):
+                    self._best_metrics = dict(val_metrics)
+                    self._epochs_no_improve = 0
+                    save_checkpoint(
+                        path=self.tracker.best_checkpoint_path,
+                        model=self.model,
+                        epoch=epoch,
+                        metrics=val_metrics,
+                        config=self.cfg,
+                        optimizer=self.optimizer,
+                        scheduler=self.scheduler,
+                    )
+                    logger.info("New best checkpoint: macro_f1=%.4f", val_metrics["macro_f1"])
+                else:
+                    self._epochs_no_improve += 1
+                    if self._epochs_no_improve >= self.patience:
+                        logger.info(
+                            "Early stopping triggered after %d epochs with no improvement.",
+                            self.patience,
+                        )
+                        break
+
+        finally:
+            self.tracker.finish()
+
+        return self._best_metrics
+
+    def validate(self, loader: torch.utils.data.DataLoader | None = None) -> dict[str, float]:
+        """
+        Evaluate the model on ``loader`` (defaults to the val DataLoader).
+
+        WARNING: This method must only be called against the **validation** split
+        during training/hyperparameter tuning.  Test splits (standard_test.csv or
+        any LOSO fold test CSV) must be reserved exclusively for the final
+        evaluation phase (Phase 8 / Phase 9).  Calling this against a test split
+        during training constitutes data leakage.
+
+        Returns:
+            Dict with keys: loss, accuracy, macro_f1, min_class_accuracy.
+        """
+        if loader is None:
+            loader = self.val_loader
+        return self._validate_epoch(loader=loader)
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _train_epoch(self, epoch: int) -> dict[str, float]:
+        """Run one training epoch. Returns train metric dict."""
+        self.model.train()
+        total_loss = total_ce = total_contrastive = 0.0
+        n_batches = 0
+
+        for batch in self.train_loader:
+            left = batch["left"].to(self.device, non_blocking=True)
+            right = batch["right"].to(self.device, non_blocking=True)
+            labels = batch["label"].to(self.device, non_blocking=True)
+
+            self.optimizer.zero_grad(set_to_none=True)
+
+            with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
+                logits = self.model(left, right if self.model.stereo_enabled else None)
+                loss_val, components = self.loss_fn(logits, labels, return_components=True)
+
+            self.scaler.scale(loss_val).backward()
+            self.scaler.unscale_(self.optimizer)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+
+            total_loss += components["loss"]
+            total_ce += components["ce_loss"]
+            total_contrastive += components["contrastive_loss"]
+            n_batches += 1
+
+        n = max(n_batches, 1)
+        return {
+            "loss": total_loss / n,
+            "ce_loss": total_ce / n,
+            "contrastive_loss": total_contrastive / n,
+        }
+
+    def _validate_epoch(
+        self, loader: torch.utils.data.DataLoader | None = None
+    ) -> dict[str, float]:
+        """Run one validation pass. Returns val metric dict."""
+        if loader is None:
+            loader = self.val_loader
+        self.model.eval()
+        all_preds: list[int] = []
+        all_labels: list[int] = []
+        total_loss = 0.0
+        n_batches = 0
+
+        with torch.no_grad():
+            for batch in loader:
+                left = batch["left"].to(self.device, non_blocking=True)
+                right = batch["right"].to(self.device, non_blocking=True)
+                labels = batch["label"].to(self.device, non_blocking=True)
+
+                with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
+                    logits = self.model(left, right if self.model.stereo_enabled else None)
+                    loss_val = self.loss_fn(logits, labels)
+
+                total_loss += loss_val.item()
+                preds = logits.argmax(dim=1).cpu().tolist()
+                all_preds.extend(preds)
+                all_labels.extend(labels.cpu().tolist())
+                n_batches += 1
+
+        n = max(n_batches, 1)
+        return {
+            "loss": total_loss / n,
+            "accuracy": compute_overall_accuracy(all_labels, all_preds),
+            "macro_f1": compute_macro_f1(all_labels, all_preds),
+            "min_class_accuracy": compute_min_class_accuracy(all_labels, all_preds),
+        }
+
+    def _is_improved(self, val_metrics: dict[str, float]) -> bool:
+        """Return True if val_metrics is better than the current best."""
+        if not self._best_metrics:
+            return True
+        return is_better_checkpoint(val_metrics, self._best_metrics)
+
+    def _resume(self, path: str) -> None:
+        """Load a checkpoint to resume training from."""
+        from src.utils.checkpoint import load_checkpoint
+
+        payload = load_checkpoint(
+            path,
+            model=self.model,
+            optimizer=self.optimizer,
+            scheduler=self.scheduler,
+            map_location=str(self.device),
+        )
+        self._start_epoch = int(payload.get("epoch", 1)) + 1
+        self._best_metrics = dict(payload.get("metrics", {}))
+        logger.info("Resumed from checkpoint %s at epoch %d.", path, self._start_epoch - 1)
