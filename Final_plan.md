@@ -777,10 +777,10 @@ already complete when Phase 8 starts.
 - Verification: 1-epoch smoke test on `configs/sense_full.yaml` completes end-to-end and produces a full experiment-tracking directory per P6.5.
 
 ### Phase 6 Deliverables Checklist
-- [ ] Combined loss implemented and tested
-- [ ] Optimizer/scheduler factory implemented
-- [ ] Progressive unfreezing controller implemented and tested
-- [ ] Checkpointing round-trip verified
+- [x] Combined loss implemented and tested
+- [x] Optimizer/scheduler factory implemented
+- [x] Progressive unfreezing controller implemented and tested
+- [x] Checkpointing round-trip verified
 - [ ] Full experiment tracking (`ExperimentTracker`) implemented and verified producing all nine artifacts
 - [ ] TensorBoard logging verified
 - [ ] Seed reproducibility verified

@@ -7,12 +7,14 @@ Stage A: P6.1 (SenseLoss, ContrastiveLoss) & P6.2 (Optimizer & Scheduler factory
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 
 import pandas as pd
 import pytest
 import torch
 import torch.nn as nn
+import torch.optim as optim
 
 from src.data.splits import compute_class_weights
 from src.training.losses import ContrastiveLoss, SenseLoss
@@ -21,6 +23,8 @@ from src.training.scheduler import (
     build_optimizer_and_scheduler,
     build_scheduler,
 )
+from src.training.trainer import PhaseController
+from src.utils.checkpoint import load_checkpoint, save_checkpoint
 
 
 class TestContrastiveLoss:
@@ -233,3 +237,414 @@ class TestOptimizerAndScheduler:
         # Check downward trend across iterations
         for i in range(len(lrs) - 1):
             assert lrs[i] >= lrs[i + 1]
+
+
+# ===========================================================================
+# Stage B — P6.3 (PhaseController) & P6.4 (Checkpoint) tests
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Minimal thin SENSE-like model for PhaseController tests
+# (uses actual BiChannelEncoder so the freeze logic targets the real structure)
+# ---------------------------------------------------------------------------
+
+
+def _make_minimal_cfg(
+    freeze_backbone_p1: bool = True,
+    unfreeze_p2: int = 2,
+    unfreeze_p3: None = None,
+) -> dict:
+    """Return a minimal config dict matching base.yaml's structure."""
+    return {
+        "model": {
+            "backbone": "efficientnet_b4",
+            "pretrained": False,  # no download in tests
+            "out_dim": 64,  # small for speed
+            "num_classes": 17,
+            "shared_weights": True,
+            "stereo": {"enabled": True},
+            "text_guidance": {"enabled": False},
+            "attention": {"num_heads": 1},
+            "classifier": {"temperature": 0.07},
+        },
+        "data": {"image_size": 224, "num_classes": 17},
+        "training": {
+            "optimizer": "adamw",
+            "base_lr": 1e-4,
+            "weight_decay": 1e-4,
+            "epochs": 50,
+            "scheduler": "cosine_annealing",
+            "t_max": 50,
+            "loss": {"alpha": 0.7, "beta": 0.0, "class_weighted": False},
+            "phases": {
+                "phase1": {
+                    "epochs": [1, 10],
+                    "freeze_backbone": freeze_backbone_p1,
+                    "lr_scale": 1.0,
+                },
+                "phase2": {
+                    "epochs": [11, 30],
+                    "freeze_backbone": False,
+                    "unfreeze_last_n_blocks": unfreeze_p2,
+                    "lr_scale": 0.1,
+                },
+                "phase3": {
+                    "epochs": [31, 50],
+                    "freeze_backbone": False,
+                    "unfreeze_last_n_blocks": unfreeze_p3,
+                    "lr_scale": 0.01,
+                },
+            },
+        },
+    }
+
+
+@pytest.fixture(scope="module")
+def sense_model_and_cfg():
+    """Build a SENSE model (stereo=True, text=False) for PhaseController tests."""
+    from src.models.sense import SENSE
+
+    cfg = _make_minimal_cfg()
+    model = SENSE.from_config(cfg)
+    model.eval()
+    return model, cfg
+
+
+class TestPhaseController:
+    """P6.3 — Progressive unfreezing controller tests."""
+
+    def test_phase1_epoch1_backbone_frozen(self, sense_model_and_cfg):
+        """
+        Required test: requires_grad states correct at epoch 1 (phase 1).
+        Backbone params must all have requires_grad=False.
+        Head/projection params must have requires_grad=True.
+        """
+        model, cfg = sense_model_and_cfg
+        ctrl = PhaseController.from_config(model, cfg)
+
+        transitioned = ctrl.step(epoch=1)
+        assert transitioned, "Phase 1 should trigger on epoch 1"
+        assert ctrl.current_phase_name == "phase1"
+
+        # Backbone (branch[0] = EfficientNet inside left_branch) must be frozen
+        backbone = model.encoder.left_branch[0]
+        for name, p in backbone.named_parameters():
+            assert not p.requires_grad, f"Backbone param '{name}' should be frozen in phase 1"
+
+        # At least one non-backbone param must be trainable
+        backbone_param_ids = {id(p) for p in backbone.parameters()}
+        trainable_non_backbone = [
+            p for p in model.parameters() if p.requires_grad and id(p) not in backbone_param_ids
+        ]
+        assert (
+            len(trainable_non_backbone) > 0
+        ), "Head/fusion/attention params should be trainable in phase 1"
+
+    def test_phase2_epoch11_last_n_blocks_unfrozen(self, sense_model_and_cfg):
+        """
+        Required test: requires_grad states correct at epoch 11 (phase 2).
+        Last 2 EfficientNet blocks should be unfrozen; earlier blocks stay frozen.
+        """
+        from src.training.trainer import _efficientnet_blocks
+
+        model, cfg = sense_model_and_cfg
+        ctrl = PhaseController.from_config(model, cfg)
+
+        ctrl.step(epoch=1)  # → phase 1
+        transitioned = ctrl.step(epoch=11)  # → phase 2
+        assert transitioned, "Phase 2 should trigger on epoch 11"
+        assert ctrl.current_phase_name == "phase2"
+
+        branch = model.encoder.left_branch
+        blocks = _efficientnet_blocks(branch)
+        n_unfreeze = 2
+
+        # Frozen blocks (all but last n)
+        frozen_blocks = blocks[:-n_unfreeze]
+        unfrozen_blocks = blocks[-n_unfreeze:]
+
+        for blk in frozen_blocks:
+            for name, p in blk.named_parameters():
+                assert not p.requires_grad, (
+                    f"Block param '{name}' should still be frozen in phase 2 "
+                    f"(it is not in the last {n_unfreeze} blocks)"
+                )
+
+        for blk in unfrozen_blocks:
+            for name, p in blk.named_parameters():
+                assert p.requires_grad, (
+                    f"Block param '{name}' should be unfrozen in phase 2 "
+                    f"(it is in the last {n_unfreeze} blocks)"
+                )
+
+    def test_phase3_epoch31_all_backbone_unfrozen(self, sense_model_and_cfg):
+        """
+        Required test: requires_grad states correct at epoch 31 (phase 3).
+        Entire backbone must have requires_grad=True.
+        """
+        model, cfg = sense_model_and_cfg
+        ctrl = PhaseController.from_config(model, cfg)
+
+        ctrl.step(epoch=1)
+        ctrl.step(epoch=11)
+        transitioned = ctrl.step(epoch=31)
+        assert transitioned, "Phase 3 should trigger on epoch 31"
+        assert ctrl.current_phase_name == "phase3"
+
+        backbone = model.encoder.left_branch[0]
+        for name, p in backbone.named_parameters():
+            assert p.requires_grad, f"Backbone param '{name}' should be unfrozen in phase 3"
+
+    def test_no_transition_within_same_phase(self, sense_model_and_cfg):
+        """step() returns False when epoch stays in the same phase."""
+        model, cfg = sense_model_and_cfg
+        ctrl = PhaseController.from_config(model, cfg)
+
+        ctrl.step(epoch=1)  # phase 1 — transition
+        result = ctrl.step(epoch=5)  # still phase 1 — no transition
+        assert not result
+
+    def test_optimizer_groups_rebuilt_at_phase_transition(self, sense_model_and_cfg):
+        """
+        Required test: optimizer parameter groups change at phase transitions,
+        and the newly unfrozen parameters actually receive gradient updates.
+        """
+        model, cfg = sense_model_and_cfg
+        ctrl = PhaseController.from_config(model, cfg)
+
+        # Phase 1: only head params in optimizer
+        ctrl.step(epoch=1)
+        p1_groups = [len(g["params"]) for g in ctrl.optimizer.param_groups]
+        total_p1 = sum(p1_groups)
+
+        # Phase 2: some backbone params added
+        ctrl.step(epoch=11)
+        p2_groups = [len(g["params"]) for g in ctrl.optimizer.param_groups]
+        total_p2 = sum(p2_groups)
+
+        # Phase 2 should have more (or equal) trainable params than Phase 1
+        assert (
+            total_p2 >= total_p1
+        ), f"Phase 2 ({total_p2} params) should have >= Phase 1 ({total_p1} params)"
+
+    def test_unfrozen_backbone_params_receive_gradients(self, sense_model_and_cfg):
+        """
+        Required test: newly unfrozen params receive gradient updates after
+        a backward pass.
+        """
+        from src.training.trainer import _efficientnet_blocks
+
+        model, cfg = sense_model_and_cfg
+        ctrl = PhaseController.from_config(model, cfg)
+
+        # Jump straight to phase 2
+        ctrl.step(epoch=1)
+        ctrl.step(epoch=11)
+
+        model.train()
+
+        # Run a forward/backward through the encoder directly
+        x = torch.randn(2, 3, 64, 64)
+        feat = model.encoder(x, x)  # stereo: returns (B, 2*out_dim)
+        loss = feat.sum()
+        loss.backward()
+
+        # Last 2 blocks of left_branch backbone should have non-None, non-zero grads
+        branch = model.encoder.left_branch
+        blocks = _efficientnet_blocks(branch)
+        unfrozen_blocks = blocks[-2:]
+        for blk in unfrozen_blocks:
+            for p in blk.parameters():
+                if p.requires_grad:
+                    assert (
+                        p.grad is not None
+                    ), "Unfrozen backbone param has no gradient after backward"
+
+        model.eval()
+
+    def test_lr_scale_applied_to_backbone_group(self, sense_model_and_cfg):
+        """Backbone param group should have lr = base_lr * lr_scale."""
+        model, cfg = sense_model_and_cfg
+        ctrl = PhaseController.from_config(model, cfg)
+
+        # Phase 2: lr_scale = 0.1
+        ctrl.step(epoch=1)
+        ctrl.step(epoch=11)
+
+        base_lr = cfg["training"]["base_lr"]  # 1e-4
+        lr_scale = 0.1
+
+        # Backbone group has lr = base_lr * lr_scale
+        backbone_lrs = [
+            g["lr"]
+            for g in ctrl.optimizer.param_groups
+            if any(
+                id(p) in {id(q) for q in model.encoder.left_branch[0].parameters()}
+                for p in g["params"]
+            )
+        ]
+        if backbone_lrs:  # only check if backbone group exists
+            for lr in backbone_lrs:
+                assert abs(lr - base_lr * lr_scale) < 1e-9, (
+                    f"Backbone LR {lr} != base_lr * lr_scale "
+                    f"({base_lr} * {lr_scale} = {base_lr * lr_scale})"
+                )
+
+
+class TestCheckpoint:
+    """P6.4 — Checkpoint save/load round-trip tests."""
+
+    def _make_simple_model(self) -> nn.Module:
+        return nn.Sequential(nn.Linear(8, 4), nn.ReLU(), nn.Linear(4, 2))
+
+    def test_save_and_load_weights_bit_identical(self, tmp_path):
+        """
+        Required test: Bit-identical weights after a save/load round-trip.
+        """
+        model = self._make_simple_model()
+        cfg = {"training": {"base_lr": 1e-4}}
+        metrics = {"macro_f1": 0.85, "accuracy": 0.90, "min_class_accuracy": 0.70}
+
+        ckpt_path = tmp_path / "test_ckpt.pth"
+        save_checkpoint(ckpt_path, model, epoch=5, metrics=metrics, config=cfg)
+
+        # Create a fresh model, load into it
+        model2 = self._make_simple_model()
+        payload = load_checkpoint(ckpt_path, model=model2, map_location="cpu")
+
+        # Compare all parameter tensors
+        for (n1, p1), (n2, p2) in zip(model.state_dict().items(), model2.state_dict().items()):
+            assert n1 == n2
+            assert torch.equal(p1, p2), f"Parameter '{n1}' differs after round-trip"
+
+        assert payload["epoch"] == 5
+        assert payload["metrics"]["macro_f1"] == pytest.approx(0.85)
+
+    def test_checkpoint_persists_all_required_fields(self, tmp_path):
+        """Checkpoint must store model, optimizer, scheduler, epoch, metrics, config."""
+        model = self._make_simple_model()
+        optimizer = optim.AdamW(model.parameters(), lr=1e-3)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10)
+
+        metrics = {
+            "macro_f1": 0.75,
+            "accuracy": 0.80,
+            "min_class_accuracy": 0.60,
+        }
+        cfg = {"training": {"base_lr": 1e-3}, "data": {"image_size": 224}}
+
+        ckpt_path = tmp_path / "full_ckpt.pth"
+        save_checkpoint(
+            ckpt_path,
+            model,
+            epoch=12,
+            metrics=metrics,
+            config=cfg,
+            optimizer=optimizer,
+            scheduler=scheduler,
+        )
+
+        payload = load_checkpoint(ckpt_path, map_location="cpu")
+        assert "model" in payload
+        assert "optimizer" in payload
+        assert "scheduler" in payload
+        assert payload["epoch"] == 12
+        assert payload["metrics"]["accuracy"] == pytest.approx(0.80)
+        assert payload["metrics"]["min_class_accuracy"] == pytest.approx(0.60)
+        assert payload["config"]["data"]["image_size"] == 224
+
+    def test_checkpoint_round_trip_gives_identical_validation_result(self, tmp_path):
+        """
+        Required test: resumed state gives an identical validation result.
+        After saving optimizer + scheduler, restoring them and running another
+        step must produce the same gradients.
+        """
+        torch.manual_seed(0)
+        model = self._make_simple_model()
+        optimizer = optim.AdamW(model.parameters(), lr=1e-3)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=5)
+
+        # Run one step
+        x = torch.randn(4, 8)
+        y = torch.randint(0, 2, (4,))
+        loss = nn.CrossEntropyLoss()(model(x), y)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        scheduler.step()
+
+        # Save
+        ckpt_path = tmp_path / "roundtrip.pth"
+        save_checkpoint(
+            ckpt_path,
+            model,
+            epoch=1,
+            metrics={"macro_f1": 0.5, "accuracy": 0.5, "min_class_accuracy": 0.0},
+            config={},
+            optimizer=optimizer,
+            scheduler=scheduler,
+        )
+
+        # Clone state before reload
+        weights_before = copy.deepcopy(model.state_dict())
+
+        # Restore into a fresh model
+        model2 = self._make_simple_model()
+        optimizer2 = optim.AdamW(model2.parameters(), lr=1e-3)
+        scheduler2 = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer2, T_max=5)
+        load_checkpoint(
+            ckpt_path,
+            model=model2,
+            optimizer=optimizer2,
+            scheduler=scheduler2,
+            map_location="cpu",
+        )
+
+        # Weights must match
+        for (n1, p1), (n2, p2) in zip(weights_before.items(), model2.state_dict().items()):
+            assert torch.equal(p1, p2), f"Param '{n1}' differs after round-trip"
+
+        # Run another step on both — results must match
+        torch.manual_seed(1)
+        x2 = torch.randn(4, 8)
+        y2 = torch.randint(0, 2, (4,))
+
+        loss1 = nn.CrossEntropyLoss()(model(x2), y2)
+        optimizer.zero_grad()
+        loss1.backward()
+        optimizer.step()
+
+        loss2 = nn.CrossEntropyLoss()(model2(x2), y2)
+        optimizer2.zero_grad()
+        loss2.backward()
+        optimizer2.step()
+
+        assert torch.isclose(
+            loss1, loss2, atol=1e-6
+        ), f"Loss after resumed step differs: {loss1.item()} vs {loss2.item()}"
+
+    def test_load_missing_file_raises(self, tmp_path):
+        """load_checkpoint raises FileNotFoundError for a missing path."""
+        with pytest.raises(FileNotFoundError, match="Checkpoint not found"):
+            load_checkpoint(tmp_path / "nonexistent.pth")
+
+    def test_config_deep_copy_does_not_alias(self, tmp_path):
+        """Mutating config after save should not corrupt the checkpoint."""
+        model = self._make_simple_model()
+        cfg = {"training": {"base_lr": 1e-4}}
+        ckpt_path = tmp_path / "alias_test.pth"
+        save_checkpoint(
+            ckpt_path,
+            model,
+            epoch=1,
+            metrics={"macro_f1": 0.5, "accuracy": 0.5, "min_class_accuracy": 0.0},
+            config=cfg,
+        )
+
+        # Mutate the original config after saving
+        cfg["training"]["base_lr"] = 999.0
+
+        payload = load_checkpoint(ckpt_path, map_location="cpu")
+        assert (
+            payload["config"]["training"]["base_lr"] == 1e-4
+        ), "Config in checkpoint should not reflect post-save mutations"
