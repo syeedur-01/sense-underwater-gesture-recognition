@@ -46,3 +46,35 @@ def load_yaml_config(path: str) -> dict:
     """Load and return a YAML config file as a Python dict."""
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Recursively merge override into base, skipping the ``_base_`` key."""
+    result = dict(base)
+    for key, val in override.items():
+        if key == "_base_":
+            continue
+        if isinstance(val, dict) and isinstance(result.get(key), dict):
+            result[key] = _deep_merge(result[key], val)
+        else:
+            result[key] = val
+    return result
+
+
+def load_merged_config(config_path: str | Path) -> dict:
+    """
+    Load a YAML config and recursively merge it on top of its ``_base_`` config (if any).
+
+    Supports chained inheritance (e.g. child -> sense_full.yaml -> base.yaml).
+    The base is resolved relative to the config file's directory.
+    """
+    config_path = Path(config_path).resolve()
+    cfg = load_yaml_config(str(config_path))
+
+    base_ref = cfg.get("_base_")
+    if base_ref:
+        base_path = (config_path.parent / base_ref).resolve()
+        base_cfg = load_merged_config(base_path)
+        cfg = _deep_merge(base_cfg, cfg)
+
+    return cfg

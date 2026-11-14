@@ -1,43 +1,15 @@
 # configs/sense_neither.yaml
 # Phase 10 P10.6 backbone-matched control: EfficientNet-B4 pipeline with all
 # three SENSE contributions disabled — no enhancement, no stereo, no text guidance.
-# stereo.enabled: false  → left image only (mono)
-# text_guidance.enabled: false → no cross-modal fusion; fallback linear head used
-# data.enhancement_method: none → raw images (no FUnIE-GAN / WaterNet caching)
-#
-# Purpose: separates the gain from the stronger backbone and training recipe
-# (ResNet18 baseline → SENSE-neither) from the gain attributable to enhancement,
-# stereo fusion and text guidance (SENSE-neither → full SENSE). Supports Claim 1.
-# Trained and evaluated on the standard split only (not a LOSO arm).
-#
-# image_size and batch_size are identical to sense_full.yaml — frozen in P5.8.
+# Inherits from sense_full.yaml; only stereo, text_guidance, and enhancement_method differ.
 
-_base_: base.yaml
+_base_: sense_full.yaml
 
 model:
-  backbone: efficientnet_b4
-  pretrained: true
-  out_dim: 512
-  num_classes: 17
-  shared_weights: false
   stereo:
-    enabled: false               # ← mono mode: left image only
+    enabled: false
   text_guidance:
-    enabled: false               # ← no cross-modal fusion; fallback linear head used
+    enabled: false
 
 data:
-  image_size: 224
-  enhancement_method: none       # ← raw images; no enhancement cache loaded
-  split_train: ./data/processed/splits/standard_train.csv
-  split_val: ./data/processed/splits/standard_val.csv
-  split_test: ./data/processed/splits/standard_test.csv
-
-training:
-  epochs: 50
-  batch_size: 16
-  base_lr: 1.0e-4
-  loss:
-    alpha: 1.0                   # CE only (no contrastive term when text_guidance disabled)
-    beta: 0.0
-    class_weighted: true         # inverse-frequency CE weights, same as all SENSE runs
-
+  enhancement_method: none

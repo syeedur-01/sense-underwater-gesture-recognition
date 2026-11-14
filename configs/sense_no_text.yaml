@@ -1,32 +1,9 @@
 # configs/sense_no_text.yaml
 # Phase 10 Experiment 5 ablation: SENSE without text guidance.
-# text_guidance.enabled: false → CrossModalFusion and CosineSimilarityHead
-# are skipped; a fallback nn.Linear(512, 16) head is used instead.
-# This is the "no text anchoring" control for Experiment 5.
+# Inherits from sense_full.yaml; only model.text_guidance.enabled differs.
 
-_base_: base.yaml
+_base_: sense_full.yaml
 
 model:
-  backbone: efficientnet_b4
-  pretrained: true
-  out_dim: 512
-  num_classes: 17
-  shared_weights: false
-  stereo:
-    enabled: true
   text_guidance:
-    enabled: false               # ← no cross-modal fusion; fallback linear head used
-
-data:
-  image_size: 224
-  enhancement_method: funie_gan
-  split_train: ./data/processed/splits/standard_train.csv
-  split_test: ./data/processed/splits/standard_test.csv
-
-training:
-  epochs: 50
-  batch_size: 16
-  base_lr: 1.0e-4
-  loss:
-    alpha: 1.0                   # CE only when text_guidance disabled (no contrastive term)
-    beta: 0.0
+    enabled: false

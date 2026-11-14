@@ -1,31 +1,8 @@
 # configs/sense_waternet.yaml
 # Phase 10 Experiment 3 ablation: SENSE with WaterNet enhanced images.
-# Everything else identical to sense_full.yaml — only enhancement_method differs.
-# IMPORTANT: enhancement is a DATA-level flag, not a model flag.
+# Inherits from sense_full.yaml; only data.enhancement_method differs.
 
-_base_: base.yaml
-
-model:
-  backbone: efficientnet_b4
-  pretrained: true
-  out_dim: 512
-  num_classes: 17
-  shared_weights: false
-  stereo:
-    enabled: true
-  text_guidance:
-    enabled: true
+_base_: sense_full.yaml
 
 data:
-  image_size: 224
   enhancement_method: waternet
-  split_train: ./data/processed/splits/standard_train.csv
-  split_test: ./data/processed/splits/standard_test.csv
-
-training:
-  epochs: 50
-  batch_size: 16
-  base_lr: 1.0e-4
-  loss:
-    alpha: 0.7
-    beta: 0.3
