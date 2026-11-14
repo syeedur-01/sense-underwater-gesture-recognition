@@ -1165,6 +1165,7 @@ class TestTrainScriptSmoke:
     It is marked 'slow' and skipped when data is unavailable.
     """
 
+    @pytest.mark.slow
     def test_train_script_1epoch_smoke(self, tmp_path):
         """
         Run scripts/train.py for 1 epoch and verify the experiment record.
