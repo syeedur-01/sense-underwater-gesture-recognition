@@ -40,27 +40,39 @@ def save_checkpoint(
     config: dict[str, Any],
     optimizer: Optimizer | None = None,
     scheduler: _LRScheduler | None = None,
+    best_metrics: dict[str, float] | None = None,
+    max_macro_f1_seen: float | None = None,
+    epochs_no_improve: int | None = None,
+    phase_name: str | None = None,
 ) -> None:
     """
     Persist a training checkpoint to ``path``.
 
     The checkpoint contains:
-      - ``model``      : model state dict
-      - ``optimizer``  : optimizer state dict (omitted when None)
-      - ``scheduler``  : scheduler state dict (omitted when None)
-      - ``epoch``      : current epoch (1-indexed)
-      - ``metrics``    : dict with at least ``macro_f1``, ``accuracy``,
-                         ``min_class_accuracy``
-      - ``config``     : deep copy of the full YAML config dict
+      - ``model``             : model state dict
+      - ``optimizer``         : optimizer state dict (omitted when None)
+      - ``scheduler``         : scheduler state dict (omitted when None)
+      - ``epoch``             : current epoch (1-indexed)
+      - ``metrics``           : dict with at least ``macro_f1``, ``accuracy``,
+                                ``min_class_accuracy``
+      - ``config``            : deep copy of the full YAML config dict
+      - ``best_metrics``      : optional dict of best validation metrics so far
+      - ``max_macro_f1_seen`` : optional float of highest val macro F1 observed
+      - ``epochs_no_improve`` : optional int of consecutive non-improving epochs
+      - ``phase_name``        : optional str of active unfreezing phase
 
     Args:
-        path:      Destination file path (parent directories are created).
-        model:     The model whose weights are saved.
-        epoch:     Current epoch number (1-indexed).
-        metrics:   Dict of metric names -> values to persist.
-        config:    Full YAML config dict for this run.
-        optimizer: Optional optimizer; its state is included when provided.
-        scheduler: Optional LR scheduler; its state is included when provided.
+        path:              Destination file path (parent directories are created).
+        model:             The model whose weights are saved.
+        epoch:             Current epoch number (1-indexed).
+        metrics:           Dict of metric names -> values to persist.
+        config:            Full YAML config dict for this run.
+        optimizer:         Optional optimizer; its state is included when provided.
+        scheduler:         Optional LR scheduler; its state is included when provided.
+        best_metrics:      Optional best validation metrics seen so far.
+        max_macro_f1_seen: Optional highest validation macro F1 seen so far.
+        epochs_no_improve: Optional count of consecutive epochs without improvement.
+        phase_name:        Optional active unfreezing phase name.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -75,6 +87,14 @@ def save_checkpoint(
         payload["optimizer"] = optimizer.state_dict()
     if scheduler is not None:
         payload["scheduler"] = scheduler.state_dict()
+    if best_metrics is not None:
+        payload["best_metrics"] = dict(best_metrics)
+    if max_macro_f1_seen is not None:
+        payload["max_macro_f1_seen"] = float(max_macro_f1_seen)
+    if epochs_no_improve is not None:
+        payload["epochs_no_improve"] = int(epochs_no_improve)
+    if phase_name is not None:
+        payload["phase_name"] = str(phase_name)
 
     torch.save(payload, path)
     logger.info(
