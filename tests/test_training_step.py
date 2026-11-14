@@ -11,11 +11,12 @@ Stage D: P6.8 (Trainer) & P6.9 (scripts/train.py).
 from __future__ import annotations
 
 import copy
+import math
 import subprocess
 import sys
 import uuid
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
@@ -284,6 +285,7 @@ def _make_minimal_cfg(
             "weight_decay": 1e-4,
             "epochs": 50,
             "scheduler": "cosine_annealing",
+            "scheduler_eta_min_ratio": 0.01,
             "t_max": 50,
             "loss": {"alpha": 0.7, "beta": 0.0, "class_weighted": False},
             "phases": {
@@ -995,6 +997,7 @@ def _make_tiny_cfg(num_classes: int = 4) -> dict:
             "base_lr": 1e-3,
             "weight_decay": 1e-4,
             "scheduler": "cosine_annealing",
+            "scheduler_eta_min_ratio": 0.01,
             "t_max": 1,
             "early_stopping_patience": 5,
             "loss": {"alpha": 1.0, "beta": 0.0, "class_weighted": True},
@@ -1052,11 +1055,14 @@ def _make_fake_loader(
 class TestTrainer:
     """P6.8 — Trainer unit tests (using patched dataloaders to avoid disk I/O)."""
 
-    def _build_trainer(self, tmp_path: Path, num_classes: int = 4) -> Trainer:
+    def _build_trainer(
+        self, tmp_path: Path, num_classes: int = 4, cfg: dict | None = None
+    ) -> Trainer:
         """Build a Trainer with fake dataloaders patched in."""
         from src.models.sense import SENSE
 
-        cfg = _make_tiny_cfg(num_classes)
+        if cfg is None:
+            cfg = _make_tiny_cfg(num_classes)
         train_csv = _make_fake_csv(tmp_path, n=20, num_classes=num_classes)
         val_csv = _make_fake_csv(tmp_path, n=8, num_classes=num_classes)
         model = SENSE.from_config(cfg)
@@ -1153,6 +1159,207 @@ class TestTrainer:
 
         ok, missing = trainer.tracker.all_artifacts_present()
         assert ok, f"Missing or empty artifacts after fit(): {missing}"
+
+
+class TestEarlyStoppingPhaseAwareness:
+    """Pre-flight check C1: Early stopping must not kill run during frozen phase."""
+
+    def test_early_stopping_guards_frozen_phase_and_resets_counter(self, tmp_path):
+        """
+        Simulate flat validation metrics from epoch 1.
+        Verify that training continues past epoch 10 and that the early stopping
+        counter resets at the phase transition (epoch 11).
+        """
+        cfg = _make_tiny_cfg()
+        cfg["training"]["epochs"] = 20
+        cfg["training"]["t_max"] = 20
+        cfg["training"]["phases"] = {
+            "phase1": {"epochs": [1, 10], "freeze_backbone": True, "lr_scale": 1.0},
+            "phase2": {
+                "epochs": [11, 15],
+                "freeze_backbone": False,
+                "unfreeze_last_n_blocks": 2,
+                "lr_scale": 0.1,
+            },
+            "phase3": {
+                "epochs": [16, 20],
+                "freeze_backbone": False,
+                "unfreeze_last_n_blocks": None,
+                "lr_scale": 0.01,
+            },
+        }
+        trainer_holder = TestTrainer()
+        trainer = trainer_holder._build_trainer(tmp_path, cfg=cfg)
+        trainer.patience = 10
+        assert trainer._first_unfreeze_epoch == 11
+
+        trainer._train_epoch = MagicMock(
+            return_value={"loss": 1.0, "ce_loss": 1.0, "contrastive_loss": 0.0}
+        )
+        trainer._validate_epoch = MagicMock(
+            return_value={
+                "loss": 1.0,
+                "accuracy": 0.50,
+                "macro_f1": 0.40,
+                "min_class_accuracy": 0.20,
+            }
+        )
+
+        epochs_visited: list[int] = []
+        counter_before_val: list[int] = []
+
+        orig_train_epoch = trainer._train_epoch
+
+        def tracked_train_epoch(epoch):
+            epochs_visited.append(epoch)
+            counter_before_val.append(trainer._epochs_no_improve)
+            return orig_train_epoch(epoch)
+
+        trainer._train_epoch = tracked_train_epoch
+
+        # Run 12 epochs: epoch 1 sets best (counter 0). Epochs 2-10 increment counter to 9.
+        # At start of epoch 11, phase transition fires and resets counter to 0!
+        trainer.fit(num_epochs=12)
+
+        # Confirm epoch 11 and 12 ran (past frozen phase epoch 10)
+        assert 11 in epochs_visited
+        assert 12 in epochs_visited
+        # Confirm that at start of epoch 11 (after transition), counter was reset to 0
+        idx_11 = epochs_visited.index(11)
+        assert (
+            counter_before_val[idx_11] == 0
+        ), f"Counter at epoch 11 start was {counter_before_val[idx_11]}, expected 0"
+
+    def test_early_stopping_fires_after_first_unfreeze_when_patience_exceeded(self, tmp_path):
+        """
+        When validation metric never improves after epoch 11, early stopping
+        must fire once patience (10) epochs elapse without improvement (at epoch 21).
+        """
+        cfg = _make_tiny_cfg()
+        cfg["training"]["epochs"] = 30
+        cfg["training"]["t_max"] = 30
+        cfg["training"]["phases"] = {
+            "phase1": {"epochs": [1, 10], "freeze_backbone": True, "lr_scale": 1.0},
+            "phase2": {
+                "epochs": [11, 25],
+                "freeze_backbone": False,
+                "unfreeze_last_n_blocks": 2,
+                "lr_scale": 0.1,
+            },
+            "phase3": {
+                "epochs": [26, 30],
+                "freeze_backbone": False,
+                "unfreeze_last_n_blocks": None,
+                "lr_scale": 0.01,
+            },
+        }
+        trainer_holder = TestTrainer()
+        trainer = trainer_holder._build_trainer(tmp_path, cfg=cfg)
+        trainer.patience = 10
+
+        trainer._train_epoch = MagicMock(
+            return_value={"loss": 1.0, "ce_loss": 1.0, "contrastive_loss": 0.0}
+        )
+        trainer._validate_epoch = MagicMock(
+            return_value={
+                "loss": 1.0,
+                "accuracy": 0.50,
+                "macro_f1": 0.40,
+                "min_class_accuracy": 0.20,
+            }
+        )
+
+        epochs_visited: list[int] = []
+        orig_train_epoch = trainer._train_epoch
+
+        def tracked_train_epoch(epoch):
+            epochs_visited.append(epoch)
+            return orig_train_epoch(epoch)
+
+        trainer._train_epoch = tracked_train_epoch
+
+        # Run up to 30 epochs with flat metrics.
+        # Phase 1: epochs 1-10 (no stop because epoch < 11).
+        # Epoch 11: transition resets counter to 0, then after validation counter becomes 1.
+        # Epochs 11-20: 10 consecutive non-improving epochs (counters 1..10).
+        # At epoch 20 end: _epochs_no_improve reaches 10 >= patience (and 20 >= 11), triggers early stop!
+        trainer.fit(num_epochs=30)
+        assert (
+            max(epochs_visited) == 20
+        ), f"Expected early stop at epoch 20, got {max(epochs_visited)}"
+
+
+class TestProgressiveLRSchedule:
+    """Pre-flight check C3: LR schedule and unfreezing phases."""
+
+    def test_lr_schedule_across_unfreezing_phases(self, tmp_path):
+        """
+        Dry-run through unfreezing phases without data.
+        Confirms cosine decay of base_lr, lr_scale proportionality for backbone,
+        dynamic base_lrs synchronization, and actual updates to newly unfrozen parameters.
+        """
+        from src.models.sense import SENSE
+
+        cfg = _make_tiny_cfg()
+        cfg["training"]["base_lr"] = 1e-4
+        cfg["training"]["epochs"] = 50
+        cfg["training"]["t_max"] = 50
+        cfg["training"]["phases"] = {
+            "phase1": {"epochs": [1, 10], "freeze_backbone": True, "lr_scale": 1.0},
+            "phase2": {
+                "epochs": [11, 30],
+                "freeze_backbone": False,
+                "unfreeze_last_n_blocks": 2,
+                "lr_scale": 0.1,
+            },
+            "phase3": {
+                "epochs": [31, 50],
+                "freeze_backbone": False,
+                "unfreeze_last_n_blocks": None,
+                "lr_scale": 0.01,
+            },
+        }
+        cfg["data"]["split_train"] = str(tmp_path / "train.csv")
+        cfg["data"]["split_val"] = str(tmp_path / "val.csv")
+
+        model = SENSE.from_config(cfg)
+        opt = build_optimizer(model, cfg)
+        sched = build_scheduler(opt, cfg)
+        ctrl = PhaseController(model=model, cfg=cfg, optimizer=opt, scheduler=sched)
+
+        for epoch in range(1, 51):
+            ctrl.step(epoch)
+
+            # Check group count matches base_lrs
+            assert len(sched.base_lrs) == len(opt.param_groups)
+
+            head_lr = opt.param_groups[0]["lr"]
+            s = epoch - 1
+            cos_fac = 0.5 * (1.0 + math.cos(math.pi * s / 50))
+            ratio = float(cfg["training"]["scheduler_eta_min_ratio"])
+            expected_factor = ratio + (1.0 - ratio) * cos_fac
+            assert math.isclose(head_lr, 1e-4 * expected_factor, rel_tol=1e-5)
+
+            if len(opt.param_groups) > 1:
+                scale = 0.1 if epoch <= 30 else 0.01
+                backbone_lr = opt.param_groups[1]["lr"]
+                assert math.isclose(backbone_lr, head_lr * scale, rel_tol=1e-5)
+
+            # Check that unfrozen parameters receive updates
+            if epoch in (11, 31):
+                p_unfrozen = next(
+                    p for p in model.encoder.left_branch[0].parameters() if p.requires_grad
+                )
+                before = p_unfrozen.clone().detach()
+                p_unfrozen.grad = torch.ones_like(p_unfrozen) * 0.01
+                opt.step()
+                opt.zero_grad(set_to_none=True)
+                after = p_unfrozen.clone().detach()
+                assert not torch.equal(before, after)
+            else:
+                opt.step()
+
+            sched.step()
 
 
 class TestTrainScriptSmoke:

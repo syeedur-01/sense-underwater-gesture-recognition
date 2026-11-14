@@ -17,7 +17,10 @@ Key invariant (P6.8):
 from __future__ import annotations
 
 import logging
+import math
+import shutil
 import time
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -118,10 +121,12 @@ class PhaseController:
         model: nn.Module,
         cfg: dict[str, Any],
         optimizer: Optimizer,
+        scheduler: Any = None,
     ) -> None:
         self.model = model
         self.cfg = cfg
         self.optimizer = optimizer
+        self.scheduler = scheduler
         self._current_phase: int | None = None  # None = not yet applied
 
         # Parse phase schedule from config
@@ -182,7 +187,7 @@ class PhaseController:
             phase["lr_scale"],
         )
         self._apply_freeze(phase)
-        self._rebuild_optimizer(phase)
+        self._rebuild_optimizer(phase, epoch=epoch)
         return True
 
     @property
@@ -228,15 +233,17 @@ class PhaseController:
                     _set_backbone_requires_grad(branch, False)
                     _set_last_n_blocks_requires_grad(branch, n, True)
 
-    def _rebuild_optimizer(self, phase: dict[str, Any]) -> None:
+    def _rebuild_optimizer(self, phase: dict[str, Any], epoch: int | None = None) -> None:
         """
         Rebuild the optimizer parameter groups to reflect the new requires_grad
-        state and lr_scale.
+        state and lr_scale, preserving the cosine decay schedule without jumps.
 
         Strategy:
           - Non-backbone params (head, text encoder, fusion, self-attention,
             projection layers) -> base_lr x 1.0  (always trainable)
           - Backbone params that now require grad -> base_lr x lr_scale
+          - Learning rates are scaled by the cosine factor for the current epoch
+            so that unfreezing does not cause an abrupt learning rate spike.
         """
         train_cfg = self.cfg.get("training", {})
         base_lr = float(train_cfg.get("base_lr", train_cfg.get("lr", 1e-4)))
@@ -260,11 +267,42 @@ class PhaseController:
             else:
                 head_params.append(p)
 
+        # When a scheduler is attached, scale newly rebuilt learning rates by
+        # the current epoch's decay factor so unfreezing does not spike LR.
+        # When standalone (no scheduler attached), keep base_lr and base_lr * lr_scale.
+        if self.scheduler is not None and epoch is not None and epoch > 1:
+            t_max = int(train_cfg.get("t_max", train_cfg.get("epochs", 50)))
+            if hasattr(self.scheduler, "eta_min_ratio"):
+                eta_min_ratio = float(self.scheduler.eta_min_ratio)
+            elif "scheduler_eta_min_ratio" in train_cfg:
+                eta_min_ratio = float(train_cfg["scheduler_eta_min_ratio"])
+            elif "min_lr" in train_cfg and base_lr > 0:
+                eta_min_ratio = float(train_cfg["min_lr"]) / base_lr
+            else:
+                eta_min_ratio = float(train_cfg["scheduler_eta_min_ratio"])
+            s = max(0, epoch - 1)
+            cos_fac = 0.5 * (1.0 + math.cos(math.pi * s / t_max))
+            decay_factor = eta_min_ratio + (1.0 - eta_min_ratio) * cos_fac
+        else:
+            decay_factor = 1.0
+
         param_groups: list[dict[str, Any]] = []
         if head_params:
-            param_groups.append({"params": head_params, "lr": base_lr})
+            param_groups.append(
+                {
+                    "params": head_params,
+                    "lr": base_lr * decay_factor,
+                    "initial_lr": base_lr,
+                }
+            )
         if backbone_params:
-            param_groups.append({"params": backbone_params, "lr": base_lr * lr_scale})
+            param_groups.append(
+                {
+                    "params": backbone_params,
+                    "lr": (base_lr * lr_scale) * decay_factor,
+                    "initial_lr": base_lr * lr_scale,
+                }
+            )
 
         # Mutate the existing optimizer in-place: clear and re-add param groups
         # so that any existing scheduler can continue referencing this optimizer.
@@ -280,12 +318,15 @@ class PhaseController:
             group.setdefault("amsgrad", False)
             self.optimizer.add_param_group(group)
 
+        if self.scheduler is not None:
+            self.scheduler.base_lrs = [g["initial_lr"] for g in self.optimizer.param_groups]
+
         logger.debug(
             "Optimizer rebuilt: %d head params (lr=%.2e), %d backbone params (lr=%.2e).",
             len(head_params),
-            base_lr,
+            base_lr * decay_factor,
             len(backbone_params),
-            base_lr * lr_scale,
+            (base_lr * lr_scale) * decay_factor,
         )
 
     # ------------------------------------------------------------------
@@ -297,6 +338,7 @@ class PhaseController:
         cls,
         model: nn.Module,
         cfg: dict[str, Any],
+        scheduler: Any = None,
     ) -> "PhaseController":
         """
         Build PhaseController + fresh optimizer from config.
@@ -305,7 +347,7 @@ class PhaseController:
         ``controller.optimizer``.
         """
         optimizer = build_optimizer(model, cfg)
-        return cls(model=model, cfg=cfg, optimizer=optimizer)
+        return cls(model=model, cfg=cfg, optimizer=optimizer, scheduler=scheduler)
 
 
 # ---------------------------------------------------------------------------
@@ -413,7 +455,24 @@ class Trainer:
         self.scheduler = build_scheduler(self.optimizer, cfg)
 
         # Phase controller (progressive unfreezing)
-        self.phase_ctrl = PhaseController(model=self.model, cfg=cfg, optimizer=self.optimizer)
+        self.phase_ctrl = PhaseController(
+            model=self.model,
+            cfg=cfg,
+            optimizer=self.optimizer,
+            scheduler=self.scheduler,
+        )
+
+        # Determine the first unfreezing epoch from config training.phases
+        phases_cfg = cfg.get("training", {}).get("phases", {})
+        first_unfreeze = None
+        for p_name in ("phase1", "phase2", "phase3"):
+            p_info = phases_cfg.get(p_name, {})
+            if not p_info.get("freeze_backbone", True):
+                first_unfreeze = int(p_info["epochs"][0])
+                break
+        if first_unfreeze is None:
+            first_unfreeze = int(phases_cfg.get("phase2", {}).get("epochs", [11])[0])
+        self._first_unfreeze_epoch = first_unfreeze
 
         # Experiment tracker
         self.tracker = ExperimentTracker(
@@ -428,6 +487,7 @@ class Trainer:
 
         # State for early stopping / checkpoint selection
         self._best_metrics: dict[str, float] = {}
+        self._max_macro_f1_seen: float = 0.0
         self._epochs_no_improve: int = 0
         self._start_epoch: int = 1
 
@@ -450,15 +510,25 @@ class Trainer:
             Best validation metrics dict (macro_f1, accuracy, min_class_accuracy).
         """
         set_seed(self.seed)
-        num_epochs = num_epochs if num_epochs is not None else self.num_epochs
+        if num_epochs is not None:
+            end_epoch = self._start_epoch + num_epochs
+        else:
+            end_epoch = max(self._start_epoch, self.num_epochs + 1)
         self.tracker.start(seed=self.seed)
 
         try:
-            for epoch in range(self._start_epoch, self._start_epoch + num_epochs):
+            for epoch in range(self._start_epoch, end_epoch):
                 epoch_start = time.monotonic()
 
                 # Phase transition (progressive unfreezing)
-                self.phase_ctrl.step(epoch)
+                transitioned = self.phase_ctrl.step(epoch)
+                if transitioned:
+                    logger.info(
+                        "Phase transition at epoch %d (%s): resetting early stopping counter.",
+                        epoch,
+                        self.phase_ctrl.current_phase_name,
+                    )
+                    self._epochs_no_improve = 0
 
                 # Train one epoch
                 train_metrics = self._train_epoch(epoch)
@@ -481,18 +551,7 @@ class Trainer:
                     epoch_duration_s=epoch_duration,
                 )
 
-                # Save last checkpoint
-                save_checkpoint(
-                    path=self.tracker.last_checkpoint_path,
-                    model=self.model,
-                    epoch=epoch,
-                    metrics=val_metrics,
-                    config=self.cfg,
-                    optimizer=self.optimizer,
-                    scheduler=self.scheduler,
-                )
-
-                # Save best checkpoint if improved
+                # Evaluate improvement and save best checkpoint if improved
                 if self._is_improved(val_metrics):
                     self._best_metrics = dict(val_metrics)
                     self._epochs_no_improve = 0
@@ -504,16 +563,62 @@ class Trainer:
                         config=self.cfg,
                         optimizer=self.optimizer,
                         scheduler=self.scheduler,
+                        best_metrics=self._best_metrics,
+                        max_macro_f1_seen=self._max_macro_f1_seen,
+                        epochs_no_improve=self._epochs_no_improve,
+                        phase_name=self.phase_ctrl.current_phase_name,
                     )
                     logger.info("New best checkpoint: macro_f1=%.4f", val_metrics["macro_f1"])
                 else:
                     self._epochs_no_improve += 1
-                    if self._epochs_no_improve >= self.patience:
-                        logger.info(
-                            "Early stopping triggered after %d epochs with no improvement.",
-                            self.patience,
-                        )
-                        break
+
+                # Save last checkpoint (reflects latest end-of-epoch state)
+                save_checkpoint(
+                    path=self.tracker.last_checkpoint_path,
+                    model=self.model,
+                    epoch=epoch,
+                    metrics=val_metrics,
+                    config=self.cfg,
+                    optimizer=self.optimizer,
+                    scheduler=self.scheduler,
+                    best_metrics=self._best_metrics,
+                    max_macro_f1_seen=self._max_macro_f1_seen,
+                    epochs_no_improve=self._epochs_no_improve,
+                    phase_name=self.phase_ctrl.current_phase_name,
+                )
+
+                # Early stopping check
+                if epoch >= self._first_unfreeze_epoch and self._epochs_no_improve >= self.patience:
+                    logger.info(
+                        "Early stopping triggered at epoch %d after %d epochs with no improvement.",
+                        epoch,
+                        self.patience,
+                    )
+                    break
+
+                # Save last checkpoint (reflects latest end-of-epoch state)
+                save_checkpoint(
+                    path=self.tracker.last_checkpoint_path,
+                    model=self.model,
+                    epoch=epoch,
+                    metrics=val_metrics,
+                    config=self.cfg,
+                    optimizer=self.optimizer,
+                    scheduler=self.scheduler,
+                    best_metrics=self._best_metrics,
+                    max_macro_f1_seen=self._max_macro_f1_seen,
+                    epochs_no_improve=self._epochs_no_improve,
+                    phase_name=self.phase_ctrl.current_phase_name,
+                )
+
+                # Early stopping check
+                if epoch >= self._first_unfreeze_epoch and self._epochs_no_improve >= self.patience:
+                    logger.info(
+                        "Early stopping triggered at epoch %d after %d epochs with no improvement.",
+                        epoch,
+                        self.patience,
+                    )
+                    break
 
         finally:
             self.tracker.finish()
@@ -613,22 +718,95 @@ class Trainer:
         }
 
     def _is_improved(self, val_metrics: dict[str, float]) -> bool:
-        """Return True if val_metrics is better than the current best."""
+        """
+        Return True if val_metrics is better than the current best.
+
+        The 0.005 tie-breaking window compares the candidate's macro F1 against
+        ``_max_macro_f1_seen`` (the highest macro F1 seen across all evaluated epochs),
+        NOT against the last accepted checkpoint, preventing creeping degradation.
+        """
+        current_f1 = float(val_metrics.get("macro_f1", 0.0))
+        current_min_acc = float(val_metrics.get("min_class_accuracy", 0.0))
+
         if not self._best_metrics:
+            self._max_macro_f1_seen = current_f1
             return True
-        return is_better_checkpoint(val_metrics, self._best_metrics)
+
+        improved = is_better_checkpoint(
+            val_macro_f1=current_f1,
+            val_min_acc=current_min_acc,
+            best_macro_f1=self._max_macro_f1_seen,
+            best_min_acc=(
+                float(self._best_metrics["min_class_accuracy"])
+                if "min_class_accuracy" in self._best_metrics
+                else None
+            ),
+        )
+        if current_f1 > self._max_macro_f1_seen:
+            self._max_macro_f1_seen = current_f1
+        return improved
 
     def _resume(self, path: str) -> None:
-        """Load a checkpoint to resume training from."""
+        """
+        Load a checkpoint to resume training from.
+
+        Restores:
+          1. Model weights
+          2. Phase state for the resume epoch: backbone requires_grad flags and
+             optimizer parameter groups rebuilt BEFORE loading optimizer state.
+          3. Optimizer and scheduler state dicts.
+          4. _best_metrics and _max_macro_f1_seen (preventing degradation / overwriting best.pth).
+          5. _epochs_no_improve (early-stopping counter).
+          6. best.pth preserved in the destination checkpoint directory if present.
+        """
         from src.utils.checkpoint import load_checkpoint
 
         payload = load_checkpoint(
             path,
             model=self.model,
-            optimizer=self.optimizer,
-            scheduler=self.scheduler,
+            optimizer=None,
+            scheduler=None,
             map_location=str(self.device),
         )
-        self._start_epoch = int(payload.get("epoch", 1)) + 1
-        self._best_metrics = dict(payload.get("metrics", {}))
-        logger.info("Resumed from checkpoint %s at epoch %d.", path, self._start_epoch - 1)
+        saved_epoch = int(payload.get("epoch", 1))
+        self._start_epoch = saved_epoch + 1
+
+        # Restore phase controller state and rebuild optimizer groups for this phase
+        # BEFORE loading optimizer/scheduler states:
+        phase_idx = self.phase_ctrl._phase_index_for_epoch(saved_epoch)
+        if phase_idx is not None:
+            self.phase_ctrl._current_phase = phase_idx
+            phase = self.phase_ctrl._phases[phase_idx]
+            self.phase_ctrl._apply_freeze(phase)
+            self.phase_ctrl._rebuild_optimizer(phase, epoch=saved_epoch)
+
+        # Restore optimizer and scheduler state dicts
+        if "optimizer" in payload and self.optimizer is not None:
+            self.optimizer.load_state_dict(payload["optimizer"])
+        if "scheduler" in payload and self.scheduler is not None:
+            self.scheduler.load_state_dict(payload["scheduler"])
+
+        # Restore metrics and tracking state
+        self._best_metrics = dict(payload.get("best_metrics", payload.get("metrics", {})))
+        self._max_macro_f1_seen = float(
+            payload.get("max_macro_f1_seen", self._best_metrics.get("macro_f1", 0.0))
+        )
+        self._epochs_no_improve = int(payload.get("epochs_no_improve", 0))
+
+        # Preserve best checkpoint if it exists in the source checkpoint directory
+        source_best = Path(path).parent / "best.pth"
+        if (
+            source_best.exists()
+            and self.tracker.best_checkpoint_path.resolve() != source_best.resolve()
+        ):
+            self.tracker.best_checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_best, self.tracker.best_checkpoint_path)
+
+        logger.info(
+            "Resumed from checkpoint %s at epoch %d (phase=%s, best_macro_f1=%.4f, epochs_no_improve=%d).",
+            path,
+            saved_epoch,
+            self.phase_ctrl.current_phase_name,
+            self._max_macro_f1_seen,
+            self._epochs_no_improve,
+        )

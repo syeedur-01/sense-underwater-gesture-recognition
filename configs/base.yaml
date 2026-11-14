@@ -35,6 +35,7 @@ training:
   base_lr: 1.0e-4
   weight_decay: 1.0e-4
   scheduler: cosine_annealing
+  scheduler_eta_min_ratio: 0.01
   t_max: 50                      # CosineAnnealingLR T_max (equals total epochs)
   early_stopping_patience: 10
   loss:
