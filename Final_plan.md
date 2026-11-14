@@ -1207,6 +1207,7 @@ All saved under `results/figures/` and `results/tables/`, inventoried in `result
 | `training.loss.alpha` / `.beta` | training config | float | CE vs. contrastive loss weighting |
 | `training.loss.class_weighted` | training config | `true` \| `false` | Whether CrossEntropy in `SenseLoss` uses inverse-frequency class weights from `compute_class_weights()` (P2.9); default `true` for all SENSE runs, `false` for the Phase 4 baseline to preserve literature comparability |
 | `training.phases` | training config | epoch ranges | 3-phase progressive unfreezing schedule boundaries |
+| `training.scheduler_eta_min_ratio` | training config | float (e.g. 0.01) | Floor ratio for cosine LR schedule (`eta_min = base_lr * scheduler_eta_min_ratio`) |
 | `data.split.protocol` | data config | `standard` \| `loso` | Which split family (Phase 2.2 vs 2.3) a run uses |
 
 ## Appendix B — Task ID Quick Reference
