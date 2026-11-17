@@ -1,0 +1,12 @@
+# configs/sense_full_lr3e-4.yaml
+# P7.3 Variation 1, Attempt 3: intermediate LR (half-log step between the twice-fatal
+# 1e-3 and Run 1's 1e-4). Tests whether a moderately higher base LR converges better
+# than Run 1 (best macro F1 0.8766) without entering the fp16 forward-overflow window
+# that killed 1e-3 in two independent attempts (epochs 6 and 4-5).
+# Inherits everything else (alpha, beta, batch_size, image_size, phase boundaries,
+# patience, weight_decay, scheduler_eta_min_ratio, lr_scale per phase) unchanged.
+
+_base_: sense_full.yaml
+
+training:
+  base_lr: 3.0e-4
