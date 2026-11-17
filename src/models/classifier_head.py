@@ -91,20 +91,31 @@ class CosineSimilarityHead(nn.Module):
             class_embeddings: (C, D) or (B, C, D) class text embeddings.
 
         Returns:
-            logits: (B, C) temperature-scaled cosine similarities.
+            logits: (B, C) temperature-scaled cosine similarities, always
+                computed (and returned) in fp32 regardless of autocast dtype.
         """
-        # L2-normalize visual features: (B, D)
-        v_norm = F.normalize(visual, p=2, dim=-1)
+        # --- Numerical hardening (audit item 2) --------------------------------
+        # The entire head computation is pinned to fp32.  Under autocast, the
+        # matmul would otherwise be downcast to fp16 (and autocast's op list
+        # can change between PyTorch versions); wrapping in
+        # ``autocast(enabled=False)`` with fp32 inputs makes the overflow
+        # safety explicit rather than dependent on autocast behavior.
+        with torch.autocast(device_type=visual.device.type, enabled=False):
+            visual_f32 = visual.float()
+            class_embeddings_f32 = class_embeddings.float()
 
-        # L2-normalize class embeddings: (C, D)
-        if class_embeddings.dim() == 3:
-            # (B, C, D) → use the first batch element's embeddings (all same if no proj)
-            e_norm = F.normalize(class_embeddings, p=2, dim=-1)  # (B, C, D)
-            # Batched matmul: (B, D) · (B, D, C) = (B, C)
-            logits = torch.bmm(v_norm.unsqueeze(1), e_norm.transpose(1, 2)).squeeze(1)
-        else:
-            e_norm = F.normalize(class_embeddings, p=2, dim=-1)  # (C, D)
-            # (B, D) · (D, C) = (B, C)
-            logits = v_norm @ e_norm.t()
+            # L2-normalize visual features: (B, D)
+            v_norm = F.normalize(visual_f32, p=2, dim=-1)
 
-        return logits / self.temperature
+            # L2-normalize class embeddings: (C, D)
+            if class_embeddings_f32.dim() == 3:
+                # (B, C, D) → use the first batch element's embeddings (all same if no proj)
+                e_norm = F.normalize(class_embeddings_f32, p=2, dim=-1)  # (B, C, D)
+                # Batched matmul: (B, D) · (B, D, C) = (B, C)
+                logits = torch.bmm(v_norm.unsqueeze(1), e_norm.transpose(1, 2)).squeeze(1)
+            else:
+                e_norm = F.normalize(class_embeddings_f32, p=2, dim=-1)  # (C, D)
+                # (B, D) · (D, C) = (B, C)
+                logits = v_norm @ e_norm.t()
+
+            return logits / self.temperature

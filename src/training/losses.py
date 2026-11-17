@@ -70,31 +70,41 @@ class ContrastiveLoss(nn.Module):
         if batch_size <= 1:
             return torch.tensor(0.0, device=device, requires_grad=True)
 
-        if text_embeddings is not None:
-            # Explicit feature vectors provided: compute cosine similarities
-            v_norm = F.normalize(logits_or_features, p=2, dim=-1)
-            if text_embeddings.dim() == 2 and text_embeddings.shape[0] != batch_size:
-                # (C, D) class embeddings: project to (B, C) similarity
-                t_norm = F.normalize(text_embeddings, p=2, dim=-1)
-                sim_matrix = (v_norm @ t_norm.t()) / self.temperature  # (B, C)
-                # In-batch cross-modal similarity matrix (B, B)
-                batch_sim = sim_matrix[:, targets]
+        # --- Numerical hardening (audit item 2) --------------------------------
+        # The similarity computation and both InfoNCE cross-entropies always
+        # run in fp32.  Under autocast, the matmul would otherwise be downcast
+        # to fp16; wrapping in ``autocast(enabled=False)`` with fp32 inputs
+        # keeps this region overflow-safe independent of the autocast op list
+        # (see CosineSimilarityHead.forward for rationale).
+        with torch.autocast(device_type=device.type, enabled=False):
+            sim_input = logits_or_features.float()
+
+            if text_embeddings is not None:
+                # Explicit feature vectors provided: compute cosine similarities
+                v_norm = F.normalize(sim_input, p=2, dim=-1)
+                text_embeddings = text_embeddings.float()
+                if text_embeddings.dim() == 2 and text_embeddings.shape[0] != batch_size:
+                    # (C, D) class embeddings: project to (B, C) similarity
+                    t_norm = F.normalize(text_embeddings, p=2, dim=-1)
+                    sim_matrix = (v_norm @ t_norm.t()) / self.temperature  # (B, C)
+                    # In-batch cross-modal similarity matrix (B, B)
+                    batch_sim = sim_matrix[:, targets]
+                else:
+                    # (B, D) already-paired text embeddings
+                    t_norm = F.normalize(text_embeddings, p=2, dim=-1)
+                    batch_sim = (v_norm @ t_norm.t()) / self.temperature  # (B, B)
             else:
-                # (B, D) already-paired text embeddings
-                t_norm = F.normalize(text_embeddings, p=2, dim=-1)
-                batch_sim = (v_norm @ t_norm.t()) / self.temperature  # (B, B)
-        else:
-            # (B, C) logits already contain temperature-scaled cosine similarities
-            # Sub-sample class similarities corresponding to batch targets -> (B, B)
-            batch_sim = logits_or_features[:, targets]
+                # (B, C) logits already contain temperature-scaled cosine similarities
+                # Sub-sample class similarities corresponding to batch targets -> (B, B)
+                batch_sim = sim_input[:, targets]
 
-        labels = torch.arange(batch_size, device=device)
+            labels = torch.arange(batch_size, device=device)
 
-        # Bidirectional InfoNCE: Image-to-Text and Text-to-Image
-        loss_i2t = F.cross_entropy(batch_sim, labels)
-        loss_t2i = F.cross_entropy(batch_sim.t(), labels)
+            # Bidirectional InfoNCE: Image-to-Text and Text-to-Image
+            loss_i2t = F.cross_entropy(batch_sim, labels)
+            loss_t2i = F.cross_entropy(batch_sim.t(), labels)
 
-        return 0.5 * (loss_i2t + loss_t2i)
+            return 0.5 * (loss_i2t + loss_t2i)
 
 
 class SenseLoss(nn.Module):
@@ -213,7 +223,10 @@ class SenseLoss(nn.Module):
         Returns:
             total_loss (scalar tensor) or (total_loss, metrics_dict).
         """
-        ce_loss = self.ce(logits, targets)
+        # Numerical hardening (audit item 2): CE is always computed on fp32
+        # logits.  The cosine head already returns fp32, but the text-disabled
+        # ablation arms use a plain nn.Linear head that emits fp16 under autocast.
+        ce_loss = self.ce(logits.float(), targets)
 
         if self.text_enabled and self.beta > 0.0 and self.contrastive is not None:
             contrastive_loss = self.contrastive(logits, targets, text_embeddings=text_embeddings)
