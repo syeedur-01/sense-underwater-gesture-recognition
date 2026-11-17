@@ -368,6 +368,13 @@ class Trainer:
       - ExperimentTracker (nine-artifact experiment record)
       - Checkpoint selection (best = highest val macro F1; tie-break = min-class accuracy)
       - Early stopping (patience from config)
+      - Divergence guard: fail-fast abort (RuntimeError) on ``nan_step_tolerance``
+        consecutive non-finite training losses or a single non-finite validation
+        loss, raised BEFORE any end-of-epoch checkpoint save.  A single occasional
+        non-finite step is tolerated and skipped (mixed-precision loss scaling
+        legitimately skips the occasional overflow).
+      - Gradient diagnostics: mean unscaled gradient norm and clipping-active
+        fraction per epoch, logged to training.log only (audit item 4).
 
     INVARIANT: ``.fit()`` only reads/writes train and val CSVs.
     It **never** opens the test-split CSV or any LOSO test CSV.
@@ -491,6 +498,23 @@ class Trainer:
         self._epochs_no_improve: int = 0
         self._start_epoch: int = 1
 
+        # Divergence guard state (fail-fast on NaN/inf).
+        # Internal safeguard, deliberately NOT config-driven.  A single
+        # occasional non-finite step is tolerated (mixed-precision loss scaling
+        # legitimately skips the occasional overflow); ``nan_step_tolerance``
+        # CONSECUTIVE non-finite training losses, or a single non-finite
+        # validation loss, means the run has diverged and training aborts.
+        self.nan_step_tolerance: int = 20
+        self._consecutive_nonfinite_steps: int = 0
+        self._nonfinite_warned: bool = False
+        # Epoch currently being trained (read by _validate_epoch for guard
+        # messages; kept as state so _validate_epoch's signature stays fixed).
+        self._current_epoch: int = 0
+
+        # Per-epoch gradient statistics (audit item 4), refreshed each epoch by
+        # _train_epoch and logged to training.log (never to metrics.csv).
+        self._last_grad_stats: dict[str, float] = {}
+
         # Resume if requested
         if resume_path is not None:
             self._resume(resume_path)
@@ -519,6 +543,7 @@ class Trainer:
         try:
             for epoch in range(self._start_epoch, end_epoch):
                 epoch_start = time.monotonic()
+                self._current_epoch = epoch
 
                 # Phase transition (progressive unfreezing)
                 transitioned = self.phase_ctrl.step(epoch)
@@ -533,7 +558,8 @@ class Trainer:
                 # Train one epoch
                 train_metrics = self._train_epoch(epoch)
 
-                # Validate
+                # Validate (divergence guard inside: raises on a non-finite val
+                # loss BEFORE the checkpoint saves below)
                 val_metrics = self._validate_epoch()
 
                 # Scheduler step
@@ -551,12 +577,42 @@ class Trainer:
                     epoch_duration_s=epoch_duration,
                 )
 
-                # Evaluate improvement and save best checkpoint if improved
+                # Evaluate improvement and save best checkpoint if improved.
+                # Never overwrite best.pth with non-finite metrics or weights.
                 if self._is_improved(val_metrics):
-                    self._best_metrics = dict(val_metrics)
-                    self._epochs_no_improve = 0
+                    if self._checkpoint_finite(val_metrics):
+                        self._best_metrics = dict(val_metrics)
+                        self._epochs_no_improve = 0
+                        save_checkpoint(
+                            path=self.tracker.best_checkpoint_path,
+                            model=self.model,
+                            epoch=epoch,
+                            metrics=val_metrics,
+                            config=self.cfg,
+                            optimizer=self.optimizer,
+                            scheduler=self.scheduler,
+                            best_metrics=self._best_metrics,
+                            max_macro_f1_seen=self._max_macro_f1_seen,
+                            epochs_no_improve=self._epochs_no_improve,
+                            phase_name=self.phase_ctrl.current_phase_name,
+                        )
+                        logger.info("New best checkpoint: macro_f1=%.4f", val_metrics["macro_f1"])
+                    else:
+                        logger.error(
+                            "Refusing to overwrite best.pth at epoch %d: "
+                            "checkpoint metrics or model weights are non-finite.",
+                            epoch,
+                        )
+                        self._epochs_no_improve += 1
+                else:
+                    self._epochs_no_improve += 1
+
+                # Save last checkpoint (reflects latest end-of-epoch state).
+                # Same finiteness gate as best.pth: keep the previous healthy
+                # checkpoint rather than persisting a diverged state for resume.
+                if self._checkpoint_finite(val_metrics):
                     save_checkpoint(
-                        path=self.tracker.best_checkpoint_path,
+                        path=self.tracker.last_checkpoint_path,
                         model=self.model,
                         epoch=epoch,
                         metrics=val_metrics,
@@ -568,24 +624,13 @@ class Trainer:
                         epochs_no_improve=self._epochs_no_improve,
                         phase_name=self.phase_ctrl.current_phase_name,
                     )
-                    logger.info("New best checkpoint: macro_f1=%.4f", val_metrics["macro_f1"])
                 else:
-                    self._epochs_no_improve += 1
-
-                # Save last checkpoint (reflects latest end-of-epoch state)
-                save_checkpoint(
-                    path=self.tracker.last_checkpoint_path,
-                    model=self.model,
-                    epoch=epoch,
-                    metrics=val_metrics,
-                    config=self.cfg,
-                    optimizer=self.optimizer,
-                    scheduler=self.scheduler,
-                    best_metrics=self._best_metrics,
-                    max_macro_f1_seen=self._max_macro_f1_seen,
-                    epochs_no_improve=self._epochs_no_improve,
-                    phase_name=self.phase_ctrl.current_phase_name,
-                )
+                    logger.error(
+                        "Refusing to update last.pth at epoch %d: "
+                        "checkpoint metrics or model weights are non-finite; "
+                        "the previous checkpoint is kept.",
+                        epoch,
+                    )
 
                 # Early stopping check
                 if epoch >= self._first_unfreeze_epoch and self._epochs_no_improve >= self.patience:
@@ -596,20 +641,30 @@ class Trainer:
                     )
                     break
 
-                # Save last checkpoint (reflects latest end-of-epoch state)
-                save_checkpoint(
-                    path=self.tracker.last_checkpoint_path,
-                    model=self.model,
-                    epoch=epoch,
-                    metrics=val_metrics,
-                    config=self.cfg,
-                    optimizer=self.optimizer,
-                    scheduler=self.scheduler,
-                    best_metrics=self._best_metrics,
-                    max_macro_f1_seen=self._max_macro_f1_seen,
-                    epochs_no_improve=self._epochs_no_improve,
-                    phase_name=self.phase_ctrl.current_phase_name,
-                )
+                # Save last checkpoint (reflects latest end-of-epoch state).
+                # Same finiteness gate as best.pth: keep the previous healthy
+                # checkpoint rather than persisting a diverged state for resume.
+                if self._checkpoint_finite(val_metrics):
+                    save_checkpoint(
+                        path=self.tracker.last_checkpoint_path,
+                        model=self.model,
+                        epoch=epoch,
+                        metrics=val_metrics,
+                        config=self.cfg,
+                        optimizer=self.optimizer,
+                        scheduler=self.scheduler,
+                        best_metrics=self._best_metrics,
+                        max_macro_f1_seen=self._max_macro_f1_seen,
+                        epochs_no_improve=self._epochs_no_improve,
+                        phase_name=self.phase_ctrl.current_phase_name,
+                    )
+                else:
+                    logger.error(
+                        "Refusing to update last.pth at epoch %d: "
+                        "checkpoint metrics or model weights are non-finite; "
+                        "the previous checkpoint is kept.",
+                        epoch,
+                    )
 
                 # Early stopping check
                 if epoch >= self._first_unfreeze_epoch and self._epochs_no_improve >= self.patience:
@@ -647,10 +702,21 @@ class Trainer:
     # ------------------------------------------------------------------
 
     def _train_epoch(self, epoch: int) -> dict[str, float]:
-        """Run one training epoch. Returns train metric dict."""
+        """Run one training epoch. Returns train metric dict.
+
+        Also records per-epoch gradient diagnostics (audit item 4): the mean
+        unscaled gradient norm and the fraction of steps where gradient
+        clipping was active, logged to training.log (never to metrics.csv).
+        """
         self.model.train()
         total_loss = total_ce = total_contrastive = 0.0
         n_batches = 0
+        # Gradient-norm statistics: captured from clip_grad_norm_'s return value
+        # (the pre-clip unscaled total norm) — no extra computation required.
+        grad_norm_sum = 0.0
+        n_grad_steps = 0
+        n_clipped = 0
+        clip_max_norm = 1.0  # unchanged P6.8 value
 
         for batch in self.train_loader:
             left = batch["left"].to(self.device, non_blocking=True)
@@ -663,9 +729,64 @@ class Trainer:
                 logits = self.model(left, right if self.model.stereo_enabled else None)
                 loss_val, components = self.loss_fn(logits, labels, return_components=True)
 
+            # --- Fail-fast divergence guard -----------------------------------
+            # A non-finite forward loss means this batch produced garbage whose
+            # gradients cannot be trusted (NaN grads would poison optimizer
+            # state).  Skip the batch entirely: no backward, no optimizer step.
+            # Occasional single overflows are tolerated (mixed-precision loss
+            # scaling skips their update anyway); ``nan_step_tolerance``
+            # consecutive non-finite losses means the run has diverged.
+            loss_f = float(components["loss"])
+            if math.isfinite(loss_f):
+                self._consecutive_nonfinite_steps = 0
+            else:
+                self._consecutive_nonfinite_steps += 1
+                if not self._nonfinite_warned:
+                    self._nonfinite_warned = True
+                    logger.warning(
+                        "Non-finite training loss (%s) at epoch %d, batch %d "
+                        "(consecutive non-finite steps: %d/%d).",
+                        loss_f,
+                        epoch,
+                        n_batches + 1,
+                        self._consecutive_nonfinite_steps,
+                        self.nan_step_tolerance,
+                    )
+                if self._consecutive_nonfinite_steps >= self.nan_step_tolerance:
+                    logger.error(
+                        "Divergence detected: training loss non-finite for %d consecutive "
+                        "steps (tolerance %d). Last occurrence: epoch %d, batch %d. "
+                        "Aborting before any checkpoint save.",
+                        self._consecutive_nonfinite_steps,
+                        self.nan_step_tolerance,
+                        epoch,
+                        n_batches + 1,
+                    )
+                    raise RuntimeError(
+                        f"Training diverged: loss was non-finite for "
+                        f"{self._consecutive_nonfinite_steps} consecutive steps "
+                        f"(tolerance {self.nan_step_tolerance}) at epoch {epoch}, "
+                        f"batch {n_batches + 1}. Last loss value: {loss_f}."
+                    )
+                # Tolerated single overflow: keep the NaN in the accumulated
+                # epoch means (visible in the CSV/TensorBoard record) and skip
+                # the poisoned update.
+                total_loss += components["loss"]
+                total_ce += components["ce_loss"]
+                total_contrastive += components["contrastive_loss"]
+                n_batches += 1
+                continue
+
             self.scaler.scale(loss_val).backward()
             self.scaler.unscale_(self.optimizer)
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                self.model.parameters(), max_norm=clip_max_norm
+            )
+            norm_f = float(grad_norm)
+            grad_norm_sum += norm_f
+            n_grad_steps += 1
+            if norm_f > clip_max_norm:
+                n_clipped += 1
             self.scaler.step(self.optimizer)
             self.scaler.update()
 
@@ -673,6 +794,30 @@ class Trainer:
             total_ce += components["ce_loss"]
             total_contrastive += components["contrastive_loss"]
             n_batches += 1
+
+        # Per-epoch gradient diagnostics (audit item 4): training.log only,
+        # deliberately NOT metrics.csv / TensorBoard.
+        n_grad = max(n_grad_steps, 1)
+        mean_grad_norm = grad_norm_sum / n_grad
+        clip_fraction = n_clipped / n_grad
+        skipped_batches = n_batches - n_grad_steps
+        self._last_grad_stats = {
+            "mean_norm": mean_grad_norm,
+            "clip_fraction": clip_fraction,
+            "steps": n_grad_steps,
+            "clipped": n_clipped,
+            "skipped_batches": skipped_batches,
+        }
+        logger.info(
+            "Epoch %d gradient stats — mean unscaled grad norm: %.4f; "
+            "clipping active in %.1f%% of steps (%d/%d; %d non-finite batches skipped).",
+            epoch,
+            mean_grad_norm,
+            100.0 * clip_fraction,
+            n_clipped,
+            n_grad_steps,
+            skipped_batches,
+        )
 
         n = max(n_batches, 1)
         return {
@@ -684,7 +829,15 @@ class Trainer:
     def _validate_epoch(
         self, loader: torch.utils.data.DataLoader | None = None
     ) -> dict[str, float]:
-        """Run one validation pass. Returns val metric dict."""
+        """Run one validation pass. Returns val metric dict.
+
+        Fail-fast divergence guard: raises RuntimeError when the validation
+        loss is non-finite.  In ``fit()`` this fires BEFORE the end-of-epoch
+        checkpoint saves, so ``last.pth`` always holds the last healthy state.
+        The failing epoch number is read from ``self._current_epoch`` (set by
+        ``fit()``) so this method's signature stays unchanged.
+        """
+        epoch: int | None = getattr(self, "_current_epoch", None)
         if loader is None:
             loader = self.val_loader
         self.model.eval()
@@ -692,6 +845,7 @@ class Trainer:
         all_labels: list[int] = []
         total_loss = 0.0
         n_batches = 0
+        nonfinite_batches = 0
 
         with torch.no_grad():
             for batch in loader:
@@ -703,15 +857,33 @@ class Trainer:
                     logits = self.model(left, right if self.model.stereo_enabled else None)
                     loss_val = self.loss_fn(logits, labels)
 
-                total_loss += loss_val.item()
+                loss_f = float(loss_val.item())
+                total_loss += loss_f
+                if not math.isfinite(loss_f):
+                    nonfinite_batches += 1
                 preds = logits.argmax(dim=1).cpu().tolist()
                 all_preds.extend(preds)
                 all_labels.extend(labels.cpu().tolist())
                 n_batches += 1
 
         n = max(n_batches, 1)
+        epoch_loss = total_loss / n
+        if not math.isfinite(epoch_loss):
+            epoch_label = epoch if epoch is not None else "<unknown>"
+            logger.error(
+                "Divergence detected: validation loss is non-finite at epoch %s "
+                "(%d/%d val batches non-finite). Aborting before any checkpoint save.",
+                epoch_label,
+                nonfinite_batches,
+                n_batches,
+            )
+            raise RuntimeError(
+                f"Validation loss is non-finite at epoch {epoch_label} "
+                f"({nonfinite_batches}/{n_batches} val batches non-finite); the model "
+                f"has likely diverged. No checkpoint was saved for this epoch."
+            )
         return {
-            "loss": total_loss / n,
+            "loss": epoch_loss,
             "accuracy": compute_overall_accuracy(all_labels, all_preds),
             "macro_f1": compute_macro_f1(all_labels, all_preds),
             "min_class_accuracy": compute_min_class_accuracy(all_labels, all_preds),
@@ -745,6 +917,27 @@ class Trainer:
         if current_f1 > self._max_macro_f1_seen:
             self._max_macro_f1_seen = current_f1
         return improved
+
+    def _metrics_finite(self, metrics: dict[str, float]) -> bool:
+        """True when every metric value is a finite number (no NaN/inf)."""
+        return all(
+            isinstance(v, (int, float)) and math.isfinite(float(v)) for v in metrics.values()
+        )
+
+    def _model_state_finite(self) -> bool:
+        """True when every floating-point parameter and buffer of the model is finite."""
+        tensors = list(self.model.parameters()) + list(self.model.buffers())
+        for t in tensors:
+            if t.is_floating_point() and not bool(torch.isfinite(t).all()):
+                return False
+        return True
+
+    def _checkpoint_finite(self, metrics: dict[str, float]) -> bool:
+        """
+        Gate applied before overwriting ``best.pth`` or ``last.pth``:
+        both the metrics dict and the model state must be finite.
+        """
+        return self._metrics_finite(metrics) and self._model_state_finite()
 
     def _resume(self, path: str) -> None:
         """

@@ -6,6 +6,7 @@ Stage A: P6.1 (SenseLoss, ContrastiveLoss) & P6.2 (Optimizer & Scheduler factory
 Stage B: P6.3 (PhaseController) & P6.4 (Checkpoint).
 Stage C: P6.5 (ExperimentTracker) & P6.6 (TensorBoard) & P6.7 (Seed control).
 Stage D: P6.8 (Trainer) & P6.9 (scripts/train.py).
+Stage E: divergence guard — fail-fast abort on NaN/inf (P6.8 hardening).
 """
 
 from __future__ import annotations
@@ -1159,6 +1160,304 @@ class TestTrainer:
 
         ok, missing = trainer.tracker.all_artifacts_present()
         assert ok, f"Missing or empty artifacts after fit(): {missing}"
+
+
+class _ForceNaNLoss:
+    """
+    Callable wrapper around SenseLoss that can inject non-finite losses.
+
+    Used only by divergence-guard tests — never mutates the wrapped loss.
+    Mirrors the Trainer's calling convention for SenseLoss:
+      - train steps: ``loss_fn(logits, labels, return_components=True)``
+      - val steps:   ``loss_fn(logits, labels)``
+    """
+
+    def __init__(self, inner: SenseLoss) -> None:
+        self.inner = inner
+        # NaN from the (N+1)-th train call onward (N finite calls first).
+        self.nan_after_train_calls: int | None = None
+        # Single NaN at the N-th train call (1-indexed).
+        self.nan_train_call: int | None = None
+        # NaN for every validation call.
+        self.nan_val: bool = False
+        self._train_calls = 0
+
+    def __call__(
+        self,
+        logits: torch.Tensor,
+        targets: torch.Tensor,
+        text_embeddings: torch.Tensor | None = None,
+        return_components: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, dict[str, float]]:
+        force_nan = False
+        if return_components:
+            self._train_calls += 1
+            if (
+                self.nan_after_train_calls is not None
+                and self._train_calls > self.nan_after_train_calls
+            ):
+                force_nan = True
+            if self.nan_train_call is not None and self._train_calls == self.nan_train_call:
+                force_nan = True
+        elif self.nan_val:
+            force_nan = True
+
+        if force_nan:
+            nan = torch.tensor(float("nan"), device=logits.device)
+            if return_components:
+                components = {
+                    "loss": float("nan"),
+                    "ce_loss": float("nan"),
+                    "contrastive_loss": float("nan"),
+                }
+                return nan, components
+            return nan
+
+        return self.inner(
+            logits,
+            targets,
+            text_embeddings=text_embeddings,
+            return_components=return_components,
+        )
+
+
+class TestDivergenceGuard:
+    """
+    Stage E — fail-fast NaN/inf divergence guard in Trainer.fit().
+
+    (a) 20 consecutive non-finite training losses abort the run.
+    (b) A single isolated non-finite training step does not abort.
+    (c) A non-finite validation loss aborts BEFORE the end-of-epoch
+        last.pth save, leaving the previous healthy checkpoint loadable.
+    """
+
+    def _build_trainer(self, tmp_path: Path) -> Trainer:
+        return TestTrainer()._build_trainer(tmp_path)
+
+    def test_consecutive_nan_train_loss_aborts_and_best_untouched(self, tmp_path):
+        """
+        (a) A loss forced to NaN aborts within 20 consecutive steps, and
+        best.pth still holds the last healthy (epoch-1) checkpoint.
+        """
+        trainer = self._build_trainer(tmp_path)
+        wrapper = _ForceNaNLoss(trainer.loss_fn)
+        # 5 train batches per epoch: epoch 1 finite, NaN from epoch 2 onward.
+        wrapper.nan_after_train_calls = 5
+        trainer.loss_fn = wrapper
+
+        with pytest.raises(RuntimeError) as excinfo:
+            trainer.fit(num_epochs=5)
+        msg = str(excinfo.value)
+        assert "epoch" in msg.lower(), f"Abort message lacks epoch info: {msg}"
+        assert "steps" in msg.lower(), f"Abort message lacks step info: {msg}"
+        assert trainer._consecutive_nonfinite_steps >= trainer.nan_step_tolerance
+
+        # best.pth must still be the epoch-1 checkpoint with finite metrics.
+        payload = load_checkpoint(trainer.tracker.best_checkpoint_path)
+        assert int(payload["epoch"]) == 1
+        assert all(math.isfinite(float(v)) for v in payload["metrics"].values())
+
+    def test_single_nonfinite_step_does_not_abort(self, tmp_path):
+        """
+        (b) One isolated non-finite training step is tolerated: the run
+        completes, the poisoned update is skipped (no backward), and the
+        consecutive counter resets to zero on the following finite steps.
+        """
+        trainer = self._build_trainer(tmp_path)
+        wrapper = _ForceNaNLoss(trainer.loss_fn)
+        wrapper.nan_train_call = 2  # second train batch of epoch 1 only
+        trainer.loss_fn = wrapper
+
+        trainer.fit(num_epochs=1)  # must not raise
+
+        assert trainer.tracker.last_checkpoint_path.exists()
+        assert trainer._consecutive_nonfinite_steps == 0
+        payload = load_checkpoint(trainer.tracker.last_checkpoint_path)
+        assert all(math.isfinite(float(v)) for v in payload["metrics"].values())
+
+    def test_nonfinite_val_loss_aborts_before_last_checkpoint_save(self, tmp_path):
+        """
+        (c) A non-finite validation loss aborts BEFORE the end-of-epoch
+        last.pth save, so last.pth still holds the previous healthy epoch
+        and remains loadable (resume-ability).
+        """
+        trainer = self._build_trainer(tmp_path)
+        trainer.fit(num_epochs=2)  # epochs 1-2 healthy; last.pth at epoch 2
+        last_path = trainer.tracker.last_checkpoint_path
+        assert int(load_checkpoint(last_path)["epoch"]) == 2
+
+        wrapper = _ForceNaNLoss(trainer.loss_fn)
+        wrapper.nan_val = True
+        trainer.loss_fn = wrapper
+
+        with pytest.raises(RuntimeError) as excinfo:
+            trainer.fit(num_epochs=1)
+        assert "epoch" in str(excinfo.value).lower()
+
+        # last.pth must still be the epoch-2 checkpoint (poisoned epoch never saved)
+        payload_after = load_checkpoint(last_path)
+        assert int(payload_after["epoch"]) == 2
+        # and it remains loadable into the model
+        load_checkpoint(last_path, model=trainer.model)
+
+
+class TestAMPOrderingGuard:
+    """
+    Regression guard (audit item 1): the mixed-precision step order in
+    Trainer._train_epoch must remain
+
+        scaler.scale(loss).backward()
+        -> scaler.unscale_(optimizer)
+        -> clip_grad_norm_(max_norm=1.0)
+        -> scaler.step(optimizer)
+        -> scaler.update()
+
+    unscale_ MUST precede clip_grad_norm_ (clipping must measure true unscaled
+    gradients) and scaler.step (GradScaler skips steps whose gradients contain
+    inf/NaN, which it detects during unscale_).
+    """
+
+    def _build_trainer(self, tmp_path: Path) -> Trainer:
+        return TestTrainer()._build_trainer(tmp_path)
+
+    def test_amp_call_order_is_scale_backward_unscale_clip_step_update(self, tmp_path):
+        trainer = self._build_trainer(tmp_path)
+
+        calls: list[str] = []
+
+        class _ScaledLossProxy:
+            def __init__(self, loss: torch.Tensor) -> None:
+                self._loss = loss
+
+            def backward(self) -> None:
+                calls.append("backward")
+                self._loss.backward()
+
+        class _RecordingScaler:
+            """Records scaler call order and delegates to the real scaler."""
+
+            def __init__(self, real) -> None:
+                self._real = real
+
+            def scale(self, loss: torch.Tensor) -> _ScaledLossProxy:
+                calls.append("scale")
+                return _ScaledLossProxy(loss)
+
+            def unscale_(self, optimizer) -> None:
+                calls.append("unscale_")
+                self._real.unscale_(optimizer)
+
+            def step(self, optimizer) -> None:
+                calls.append("step")
+                self._real.step(optimizer)
+
+            def update(self) -> None:
+                calls.append("update")
+                self._real.update()
+
+        real_clip = torch.nn.utils.clip_grad_norm_
+
+        def recording_clip(params, max_norm, **kwargs):
+            calls.append("clip")
+            return real_clip(params, max_norm=max_norm, **kwargs)
+
+        trainer.scaler = _RecordingScaler(trainer.scaler)
+
+        expected_cycle = ["scale", "backward", "unscale_", "clip", "step", "update"]
+
+        with patch("torch.nn.utils.clip_grad_norm_", side_effect=recording_clip):
+            # 20 fake samples / batch size 4 = 5 batches -> 5 identical cycles
+            trainer._train_epoch(epoch=1)
+
+        assert calls[:6] == expected_cycle, f"AMP step order wrong: {calls[:6]}"
+        assert len(calls) == 30, f"Expected 5 complete AMP cycles, got {len(calls)} calls"
+        # Every cycle must keep the correct relative order.
+        for start in range(0, len(calls), 6):
+            assert calls[start : start + 6] == expected_cycle, f"Cycle at {start} wrong: {calls}"
+
+
+class TestNumericsHardening:
+    """
+    Audit item 2 — fp32 hardening of the cosine head and the losses.
+
+    Inside an active autocast region the head's matmul would otherwise be
+    downcast (fp16 on CUDA / bf16 on CPU); the hardened implementation must
+    return fp32 regardless, so overflow safety no longer depends on the
+    autocast op list.  CPU bf16 autocast is used so these tests run in the
+    plain (not-slow) CPU test suite.
+    """
+
+    def test_cosine_head_returns_fp32_under_autocast(self):
+        from src.models.classifier_head import CosineSimilarityHead
+
+        head = CosineSimilarityHead(embed_dim=16, num_classes=5)
+        visual = torch.randn(4, 16)
+        class_emb = torch.randn(5, 16)
+        with torch.autocast("cpu", dtype=torch.bfloat16):
+            out = head(visual, class_emb)
+        assert out.dtype == torch.float32
+        assert out.shape == (4, 5)
+
+    def test_cosine_head_batched_embeddings_fp32_under_autocast(self):
+        from src.models.classifier_head import CosineSimilarityHead
+
+        head = CosineSimilarityHead(embed_dim=16, num_classes=5)
+        visual = torch.randn(2, 16)
+        class_emb = torch.randn(2, 5, 16)
+        with torch.autocast("cpu", dtype=torch.bfloat16):
+            out = head(visual, class_emb)
+        assert out.dtype == torch.float32
+        assert out.shape == (2, 5)
+
+    def test_contrastive_loss_returns_fp32_under_autocast(self):
+        loss_fn = ContrastiveLoss(temperature=0.07)
+        logits = torch.randn(4, 5)
+        targets = torch.randint(0, 5, (4,))
+        with torch.autocast("cpu", dtype=torch.bfloat16):
+            out = loss_fn(logits, targets)
+        assert out.dtype == torch.float32
+
+    def test_sense_loss_ce_returns_fp32_under_autocast(self):
+        loss_fn = SenseLoss(alpha=1.0, beta=0.0, text_enabled=False)
+        logits = torch.randn(4, 5)
+        targets = torch.randint(0, 5, (4,))
+        with torch.autocast("cpu", dtype=torch.bfloat16):
+            out = loss_fn(logits, targets)
+        assert out.dtype == torch.float32
+
+
+class TestGradientNormLogging:
+    """
+    Audit item 4 — per-epoch mean unscaled gradient norm and clipping-active
+    fraction must be logged to training.log (via the module logger) and stored
+    on the trainer, never written to metrics.csv.
+    """
+
+    def _build_trainer(self, tmp_path: Path) -> Trainer:
+        return TestTrainer()._build_trainer(tmp_path)
+
+    def test_epoch_logs_grad_norm_summary_and_stats(self, tmp_path, caplog):
+        import logging as _logging
+
+        trainer = self._build_trainer(tmp_path)
+
+        with caplog.at_level(_logging.INFO, logger="src.training.trainer"):
+            trainer._train_epoch(epoch=1)
+
+        messages = [
+            record.getMessage()
+            for record in caplog.records
+            if "mean unscaled grad norm" in record.getMessage()
+        ]
+        assert messages, "Epoch gradient summary was not logged"
+        assert "clipping active in" in messages[0]
+
+        stats = trainer._last_grad_stats
+        assert stats["steps"] == 5  # 20 fake samples / batch size 4
+        assert 0.0 <= stats["clip_fraction"] <= 1.0
+        assert math.isfinite(stats["mean_norm"])
+        assert stats["clipped"] <= stats["steps"]
+        assert stats["skipped_batches"] == 0  # no NaN injected in this run
 
 
 class TestEarlyStoppingPhaseAwareness:
