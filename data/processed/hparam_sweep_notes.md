@@ -505,12 +505,16 @@ explicitly in writing before any test-split evaluation is performed.
 
 ### What evidence will be generated
 
-- A comparison plot of `val_macro_f1` vs. epoch for Run 1, Variation 1 Attempt 3,
-  Variation 2 and Variation 3, saved to `results/hparam_sweep/comparison_plot.png`.
-  *(Outstanding — not yet generated.)*
+- A comparison plot of `val_macro_f1` vs. epoch across every tried run — Run 1, Variation 1
+  Attempts 1–3 (the two `lr 1e-3` divergences are drawn dashed), Variation 2 and
+  Variation 3 — saved to `results/hparam_sweep/comparison_plot.png`. A second panel zooms on
+  epochs 25–50 for the completed runs. *(Generated 2026-11-19 via
+  `scripts/plot_hparam_sweep.py`.)*
 - A summary table saved to `results/hparam_sweep/summary_table.csv` with one row per run:
   config, best epoch, best `val_macro_f1`, best `val_accuracy`, best
-  `val_min_class_accuracy`, phase-mean macro F1 (phases 1–3), and total wall time.
-  *(Outstanding — not yet generated.)*
+  `val_min_class_accuracy`, phase-mean macro F1 (phases 1–3), and total wall time; plus
+  `run_dir`, `status` (completed / diverged) and the best-checkpoint `val_loss` for
+  traceability. Completed runs are ranked; diverged runs are listed unranked. *(Generated
+  2026-11-19 via `scripts/plot_hparam_sweep.py`.)*
 - The winning configuration stated in writing in this file under a "Decision" section,
   with justification referencing the above evidence. *(Done — see "Decision — 2026-11-19".)*
