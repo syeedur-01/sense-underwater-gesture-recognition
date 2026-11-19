@@ -1,0 +1,19 @@
+# configs/sense_full_lr3e-4_p3lr0.1.yaml
+# P7.3 Variation 2 — single-axis test: phase-3 backbone LR scale 0.01 -> 0.1.
+#
+# Rationale: in phase 3 (epochs 31-50) the backbone trains at base_lr x lr_scale.
+# At 0.01 that is 3e-6 — ~33x below the ResNet18 baseline's 1e-4 fine-tune LR — so the
+# pretrained EfficientNet features barely adapt to the underwater domain and the
+# cosine head does all the fitting. 0.1 gives 3e-5: still 10x below the head LR
+# (3e-4) and 3x below the baseline, so it stays well inside the stability region
+# that 1e-3 violated twice.
+#
+# Everything else (seed, epochs, batch, alpha/beta, class_weighted, phase
+# boundaries, unfreeze schedule, weight_decay, scheduler) is inherited unchanged.
+
+_base_: sense_full_lr3e-4.yaml
+
+training:
+  phases:
+    phase3:
+      lr_scale: 0.1
