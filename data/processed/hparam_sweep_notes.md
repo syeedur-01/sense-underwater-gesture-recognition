@@ -1,6 +1,6 @@
 # Hyperparameter Sweep Notes — P7.3
 
-Generated: 2026-11-15 · Updated: 2026-11-19 (Variations 1–2 recorded; winner declared)    
+Generated: 2026-11-15 · Updated: 2026-11-19 (Variations 1–3 recorded; winner declared)    
 Plan reference: `Final_plan.md` §P7.3  
 Tie-break rule: highest `val_macro_f1`; `val_min_class_accuracy` as tie-breaker (Evaluation Strategy section of `Final_plan.md`).
 
@@ -374,20 +374,119 @@ backbone actually receiving gradients.
 
 ---
 
+## Variation 3 — Phase-3 backbone LR scale, second step
+
+**Config:** `configs/sense_full_lr3e-4_p3lr0.3.yaml`
+**Run folder:** `runs/sense_full_lr3e-4_p3lr0.3/20261119T120231Z` (50/50 epochs,
+11,640.19 s ≈ 3 h 14 m, zero non-finite batches skipped, zero guard firings, no early stop)
+
+### What was changed
+
+| Parameter | Old value | New value |
+|-----------|-----------|-----------|
+| `training.phases.phase3.lr_scale` | 0.1 | 0.3 |
+
+Single axis; inherits `sense_full_lr3e-4_p3lr0.1.yaml`. `lr_scale` again applies to the
+backbone parameter group only — head, fusion, attention and text encoder stay at `base_lr`:
+
+| Group | V2 | V3 |
+|-------|----|----|
+| Head / fusion / attention | 3.0e-04 | 3.0e-04 (unchanged) |
+| Backbone, nominal (`base_lr × lr_scale`) | 3.0e-05 | 9.0e-05 |
+| Backbone, actual at epoch 31 (cosine at ≈0.32 of peak) | ≈9.7e-06 | ≈2.9e-05 |
+
+### Why it was changed
+
+V2's response to the first step (0.01 → 0.1) was large (+0.035015) and confined to phase 3,
+so the axis was clearly live. This step tests whether that response is still rising. 0.3 puts
+the backbone at a nominal 9e-5 — just under the 1e-4 at which the ResNet18 baseline fine-tunes
+its entire network — while remaining 3.3× below the head LR and ≈11× below the 1e-3 that
+diverged twice.
+
+### Best checkpoint
+
+| Field | Value |
+|-------|-------|
+| Best epoch | **45** |
+| `val_macro_f1` | 0.956383 |
+| `val_accuracy` | 0.965923 |
+| `val_min_class_accuracy` | 0.914286 |
+| `val_loss` | 0.467379 |
+
+Final epoch 50: macro F1 0.9449 at the LR floor (3e-6). Unlike V2, the `metrics.csv` peak and
+the saved `best.pth` coincide (epoch 45), so no tie-break was involved.
+
+### Phase-mean macro F1
+
+| Phase | Epoch range | Mean `val_macro_f1` | Mean epoch time (s) |
+|-------|-------------|---------------------|---------------------|
+| Phase 1 (frozen backbone) | 1 – 10 | 0.576761 | 166.4 |
+| Phase 2 (unfreeze last 2 blocks) | 11 – 30 | 0.782731 | 179.0 |
+| Phase 3 (full backbone) | 31 – 50 | 0.934816 | 316.1 |
+
+### Unfreeze transitions
+
+| Transition | Δ `val_macro_f1` |
+|------------|------------------|
+| Epoch 10 → 11 (Phase 2 unfreeze) | +0.037452 |
+| Epoch 30 → 31 (Phase 3 unfreeze) | **+0.065212** |
+
+### vs Variation 2 (the only changed axis)
+
+| Metric | V2 (`lr_scale` 0.1) | V3 (`lr_scale` 0.3) | Δ |
+|--------|---------------------|---------------------|---|
+| `val_macro_f1` | 0.929634 | **0.956383** | **+0.026749** |
+| `val_accuracy` | 0.950101 | 0.965923 | +0.015822 |
+| `val_min_class_accuracy` | 0.857143 | 0.914286 | +0.057143 |
+| Phase-1 mean `val_macro_f1` | 0.574852 | 0.576761 | +0.001909 |
+| Phase-2 mean `val_macro_f1` | 0.797725 | 0.782731 | −0.014994 |
+| Phase-3 mean `val_macro_f1` | 0.915468 | 0.934816 | **+0.019348** |
+
+### Attribution and response trend
+
+Phases 1–2 again have identical configs and differ only within run-to-run noise; the gain is
+confined to phase 3. The within-run phase-3 gain (best − epoch 30) rises monotonically along
+the axis:
+
+| Run | `lr_scale` | Phase-3 gain (best − ep 30) | Phase-3 mean |
+|-----|-----------|-----------------------------|--------------|
+| V1-A3 | 0.01 | +0.0502 | 0.876272 |
+| V2 | 0.1 | +0.0818 | 0.915468 |
+| V3 | 0.3 | **+0.1353** | **0.934816** |
+
+Phase-3 *mean* increments are shrinking (+0.039196 → +0.019348) — diminishing returns.
+Phase-3 epoch time rose again (292 s → 316 s), consistent with the backbone training harder.
+
+### Noise consideration
+
+Single-seed run-to-run variance is measurable directly from the three runs that share an
+identical phase-1/2 recipe: their phase-2 means over epochs 11–20 are 0.7658 / 0.7613 / 0.7465,
+a spread of ≈0.019 — larger than the 0.005 tie window. The decision rule for this variation was
+therefore fixed before the result was seen: a delta beyond ±0.020 counts as real, inside it as
+a tie. V3's +0.026749 exceeds that band.
+
+---
+
 ## Decision — 2026-11-19
 
-**Winning configuration:** `configs/sense_full_lr3e-4_p3lr0.1.yaml`
-**Winning run:** `runs/sense_full_lr3e-4_p3lr0.1/20261119T063459Z`
+**Winning configuration:** `configs/sense_full_lr3e-4_p3lr0.3.yaml`
+**Winning run:** `runs/sense_full_lr3e-4_p3lr0.3/20261119T120231Z`
 **Best checkpoint:** `checkpoints/best.pth`, epoch 45
 
 | Rank | Configuration | Best epoch | `val_macro_f1` | `val_accuracy` | `val_min_class_accuracy` |
 |------|---------------|-----------|----------------|----------------|--------------------------|
-| 1 | `sense_full_lr3e-4_p3lr0.1` (V2) | 45 | **0.929634** | 0.950101 | 0.857143 |
-| 2 | `sense_full_lr3e-4` (V1-A3) | 41 | 0.894619 | 0.916836 | 0.827586 |
-| 3 | `sense_full` (Run 1) | 49 | 0.876609 | 0.898174 | 0.770492 |
+| 1 | `sense_full_lr3e-4_p3lr0.3` (V3) | 45 | **0.956383** | 0.965923 | 0.914286 |
+| 2 | `sense_full_lr3e-4_p3lr0.1` (V2) | 45 | 0.929634 | 0.950101 | 0.857143 |
+| 3 | `sense_full_lr3e-4` (V1-A3) | 41 | 0.894619 | 0.916836 | 0.827586 |
+| 4 | `sense_full` (Run 1) | 49 | 0.876609 | 0.898174 | 0.770492 |
 
-Margin over the runner-up: **+0.035015** — seven times the 0.005 tie window, so no
-tie-breaker is required. Cumulative improvement over Run 1: **+0.053025** macro F1.
+Margin over the runner-up: **+0.026749** — above both the 0.005 tie window and the ≈0.019
+single-seed run-to-run noise band, so no tie-breaker is required. Cumulative improvement over
+Run 1: **+0.079774** macro F1.
+
+The sweep is closed at three variations (P7.3 cap: 3–4). No further single-axis runs were
+scheduled: phase-3 mean increments are diminishing (+0.039 → +0.019) and the remaining headroom
+against the baseline is within noise.
 
 Selected from saved `best.pth` checkpoints only; the test split was not used at any point in
 the sweep. The winner is named here in writing before any test-split evaluation, per the
@@ -406,8 +505,8 @@ explicitly in writing before any test-split evaluation is performed.
 
 ### What evidence will be generated
 
-- A comparison plot of `val_macro_f1` vs. epoch for Run 1, Variation 1 Attempt 3 and
-  Variation 2, saved to `results/hparam_sweep/comparison_plot.png`.
+- A comparison plot of `val_macro_f1` vs. epoch for Run 1, Variation 1 Attempt 3,
+  Variation 2 and Variation 3, saved to `results/hparam_sweep/comparison_plot.png`.
   *(Outstanding — not yet generated.)*
 - A summary table saved to `results/hparam_sweep/summary_table.csv` with one row per run:
   config, best epoch, best `val_macro_f1`, best `val_accuracy`, best
