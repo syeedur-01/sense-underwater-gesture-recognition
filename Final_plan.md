@@ -843,7 +843,7 @@ Phase 6 complete.
 - [x] Full training run completed on standard split, val-only monitoring confirmed
 - [x] Sanity sweep (if performed) documented per the five required fields for every variation
 - [x] Final checkpoint selected per the Evaluation Strategy's stated criterion and frozen
-- [ ] `notebooks/05_hyperparameter_analysis.ipynb` executed with saved outputs
+- [x] `notebooks/05_hyperparameter_analysis.ipynb` executed with saved outputs
 
 **Phase 7 exit criterion:** A trained, checkpointed SENSE model exists with fully documented, traceable validation performance and a written justification for every configuration decision made.
 

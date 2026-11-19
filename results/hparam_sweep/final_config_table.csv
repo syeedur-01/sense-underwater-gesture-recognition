@@ -1,0 +1,22 @@
+field,value
+experiment,sense_full_lr3e-4_p3lr0.3
+config,configs/sense_full_lr3e-4_p3lr0.3.yaml
+run directory,runs/sense_full_lr3e-4_p3lr0.3/20261119T120231Z
+best epoch,45
+val macro F1,0.956383
+val accuracy,0.965923
+val min-class accuracy,0.914286
+val loss,0.467379
+wall time,3h14m00s
+training.base_lr,3.0e-04
+phase1.lr_scale,1.0
+phase2.lr_scale,0.1
+phase3.lr_scale,0.3
+training.batch_size,16
+training.epochs,50
+training.seed,42
+loss.alpha / beta,0.7 / 0.3
+loss.class_weighted,True
+data.enhancement_method,funie_gan
+model.stereo.enabled,True
+model.text_guidance.enabled,True
