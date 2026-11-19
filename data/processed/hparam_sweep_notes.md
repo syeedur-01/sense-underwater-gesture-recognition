@@ -1,6 +1,6 @@
 # Hyperparameter Sweep Notes — P7.3
 
-Generated: 2026-11-15 · Updated: 2026-11-17 (control diagnostic completed; Attempt 2 decision pending)    
+Generated: 2026-11-15 · Updated: 2026-11-19 (Variations 1–2 recorded; winner declared)    
 Plan reference: `Final_plan.md` §P7.3  
 Tie-break rule: highest `val_macro_f1`; `val_min_class_accuracy` as tie-breaker (Evaluation Strategy section of `Final_plan.md`).
 
@@ -116,25 +116,115 @@ after this run. The CSV signature above is the only record of its failure dynami
 
 ---
 
-### Attempt 2 — post-hardening rerun — PENDING
+### Attempt 2 — post-hardening rerun — DIVERGED (guard-confirmed)
 
-**Status:** pending — the `sense_neither.yaml` control diagnostic completed 2026-11-17
-(see the section below): the pipeline trains fully healthily at lr 1e-4 with the guard
-active, and its gradient regime is now characterized. The remaining decision is between
-rerunning lr1e-3 with the guard (Attempt 2 as specified below), going directly to an
-intermediate LR (3e-4), or adding warmup.
+**Run folder:** `runs/sense_full_lr1e-3/20261117T162825Z`
+**Status:** aborted by the divergence guard at epoch 5, batch 243 — 20 consecutive
+non-finite training-loss steps (tolerance 20). Total wall time 645.72 s; the abort fired
+46 s into epoch 5.
 
-**Protocol for Attempt 2 (differs from Attempt 1):**
-- Divergence guard active: aborts within ~20 consecutive non-finite steps (~1 minute)
-  instead of limping for 8 dead epochs; last.pth preserved at the last healthy epoch.
-- Per-epoch gradient stats in training.log provide the evidence Attempt 1 lacks:
-  climbing mean norm + high clipping fraction before a NaN supports hypothesis C;
-  low clipping with NaN appearing refutes it.
-- fp32-hardened head and losses remove the overflow-sensitive ops from the equation.
+**Protocol applied:** divergence guard active, fp32-hardened head and losses, per-epoch
+gradient stats logged to `training.log`.
 
-**Outcome:** pending.
-**Decision:** pending — will be recorded here after Attempt 2's metrics.csv (and, if it
-diverges, its training.log gradient story) is available.
+| Epoch | `train_loss` | `val_loss` | `val_accuracy` | `val_macro_f1` |
+|-------|--------------|------------|----------------|----------------|
+| 1 | 2.3981 | 2.0219 | 0.3205 | 0.2272 |
+| 2 | 1.9947 | 1.7788 | 0.4000 | 0.3097 |
+| 3 | 1.8800 | 1.8798 | 0.3870 | 0.2730 |
+| 4 | **nan** (32 non-finite batches skipped) | 1.7181 | 0.4215 | 0.3029 |
+| 5 | — aborted at batch 243 | — | — | — |
+
+First non-finite training loss: epoch 4, batch 435.
+
+**Checkpoints preserved:**
+
+| Checkpoint | Epoch | `val_macro_f1` | `val_accuracy` | `val_min_class_accuracy` |
+|-----------|-------|----------------|----------------|--------------------------|
+| `best.pth` | 2 | 0.3097 | 0.4000 | 0.0000 |
+| `last.pth` | 4 | 0.3029 | 0.4215 | 0.0000 |
+
+Both verified loadable; no checkpoint holds a diverged state.
+
+**Gradient evidence (Attempt 1 had none):**
+
+| Epoch | Mean unscaled grad norm | Clipping active |
+|-------|------------------------|-----------------|
+| 3 | 0.6923 | 13.5% (97/719) |
+| 4 | 0.6640 | 11.4% (78/687) |
+
+For reference, the healthy 3e-4 run operates at mean norm 2.5–4.6 with clipping active in
+90–100% of steps. At 1e-3 the gradients were **smaller**, not larger, and clipping rarely
+engaged — yet the loss still went non-finite. That refutes the gradient-explosion reading
+and supports hypothesis C: corruption originates in the forward pass (fp16 overflow), not
+the backward pass. `val_loss` remained finite through epoch 4, confining the failure to
+training-side computation.
+
+**Conclusion:** 1e-3 is outside this pipeline's stability region, confirmed independently
+twice (Attempt 1 at epoch 6, Attempt 2 at epochs 4–5). No further 1e-3 attempts.
+
+---
+
+### Attempt 3 — intermediate base LR (3e-4) — COMPLETED
+
+**Config:** `configs/sense_full_lr3e-4.yaml`
+**Run folder:** `runs/sense_full_lr3e-4/20261117T172308Z` (50/50 epochs, 10,284.67 s ≈ 2 h 51 m,
+zero non-finite batches skipped, zero guard firings, no early stop)
+
+#### What was changed
+
+| Parameter | Old value | New value |
+|-----------|-----------|-----------|
+| `training.base_lr` | 1.0e-04 | 3.0e-04 |
+
+Half-log step between Run 1 (1e-4) and the twice-fatal 1e-3. All other values inherited
+unchanged from `sense_full.yaml`.
+
+#### Why it was changed
+
+1e-3 failed twice, but Run 1's metrics showed the model was still improving at the epoch-50
+LR floor, so 1e-4 was likely too low. 3e-4 is the geometric midpoint of the two.
+
+#### Best checkpoint
+
+| Field | Value |
+|-------|-------|
+| Best epoch | **41** |
+| `val_macro_f1` | 0.894619 |
+| `val_accuracy` | 0.916836 |
+| `val_min_class_accuracy` | 0.827586 |
+| `val_loss` | 0.625926 |
+
+Final epoch 50: macro F1 0.8830 at the LR floor (3e-6).
+
+#### Phase-mean macro F1
+
+| Phase | Epoch range | Mean `val_macro_f1` | Mean epoch time (s) |
+|-------|-------------|---------------------|---------------------|
+| Phase 1 (frozen backbone) | 1 – 10 | 0.587017 | 156.5 |
+| Phase 2 (unfreeze last 2 blocks) | 11 – 30 | 0.799992 | 176.3 |
+| Phase 3 (full backbone) | 31 – 50 | 0.876272 | 256.5 |
+
+#### Unfreeze transitions
+
+| Transition | Δ `val_macro_f1` |
+|------------|------------------|
+| Epoch 10 → 11 (Phase 2 unfreeze) | **+0.084988** |
+| Epoch 30 → 31 (Phase 3 unfreeze) | **+0.026001** |
+
+Both unfreezes now produce clear jumps — the symptom that motivated Variation 1 is resolved
+at 3e-4 (Run 1's Phase 2 transition was only +0.0055).
+
+#### vs Run 1 (1e-4)
+
+| Metric | Run 1 | Attempt 3 (3e-4) | Δ |
+|--------|-------|------------------|---|
+| `val_macro_f1` | 0.876609 | **0.894619** | **+0.018010** |
+| `val_accuracy` | 0.898174 | 0.916836 | +0.018662 |
+| `val_min_class_accuracy` | 0.770492 | 0.827586 | +0.057094 |
+| Best epoch | 49 | 41 | — |
+
+**Outcome:** completed with no instability. `val_macro_f1` +0.0180 over Run 1 — outside the
+0.005 tie window. Selected as the LR baseline for subsequent variations.
 
 ---
 
@@ -199,6 +289,112 @@ oscillating ~0.81–0.83 through the LR floor.
 
 ---
 
+## Variation 2 — Phase-3 backbone LR scale
+
+**Config:** `configs/sense_full_lr3e-4_p3lr0.1.yaml`
+**Run folder:** `runs/sense_full_lr3e-4_p3lr0.1/20261119T063459Z` (50/50 epochs,
+11,411.95 s ≈ 3 h 10 m, zero non-finite batches skipped, zero guard firings, no early stop)
+
+### What was changed
+
+| Parameter | Old value | New value |
+|-----------|-----------|-----------|
+| `training.phases.phase3.lr_scale` | 0.01 | 0.1 |
+
+Single axis. Inherits `sense_full_lr3e-4.yaml` via `_base_`; base_lr, phase boundaries,
+unfreeze schedule, alpha/beta, class_weighted, weight_decay and scheduler are all unchanged.
+
+`lr_scale` multiplies `base_lr` for the **backbone parameter group only** — head, fusion,
+attention and text-encoder parameters always train at `base_lr`
+(`src/training/trainer.py::_build_optimizer_for_phase`). Effect in phase 3:
+
+| Group | Before | After |
+|-------|--------|-------|
+| Head / fusion / attention | 3.0e-04 | 3.0e-04 (unchanged) |
+| Backbone (all blocks) | 3.0e-06 | 3.0e-05 |
+
+### Why it was changed
+
+Phase 3 is the only phase in which all backbone blocks are unfrozen, and at 0.01 the
+backbone learned at 3e-6 — 33× below the 1e-4 at which the ResNet18 baseline fine-tunes its
+entire network, and 100× below the head's own LR. Under that ratio the pretrained
+EfficientNet features can barely adapt while the cosine head carries the entire fit. 0.1
+gives 3e-5: 10× below the head and 3× below the baseline, so it stays well inside the
+stability region that 1e-3 violated.
+
+### Best checkpoint
+
+| Field | Value |
+|-------|-------|
+| Best epoch | **45** |
+| `val_macro_f1` | 0.929634 |
+| `val_accuracy` | 0.950101 |
+| `val_min_class_accuracy` | 0.857143 |
+| `val_loss` | 0.508554 |
+
+Final epoch 50: macro F1 0.9261 at the LR floor (3e-6).
+
+**Note on checkpoint selection:** the highest single-epoch macro F1 in `metrics.csv` is
+epoch 46 at 0.934241 (acc 0.951318, min-class 0.800000). It was not saved as `best.pth`
+because +0.0046 over epoch 45's 0.929634 falls inside the 0.005 tie window, and the
+tie-breaker (min-class accuracy) favoured epoch 45 (0.857143 vs 0.800000). This is the
+documented selection rule (`is_better_checkpoint`) operating as designed.
+
+### Phase-mean macro F1
+
+| Phase | Epoch range | Mean `val_macro_f1` | Mean epoch time (s) |
+|-------|-------------|---------------------|---------------------|
+| Phase 1 (frozen backbone) | 1 – 10 | 0.574852 | 186.1 |
+| Phase 2 (unfreeze last 2 blocks) | 11 – 30 | 0.797725 | 182.4 |
+| Phase 3 (full backbone) | 31 – 50 | 0.915468 | 291.6 |
+
+### Unfreeze transitions
+
+| Transition | Δ `val_macro_f1` |
+|------------|------------------|
+| Epoch 10 → 11 (Phase 2 unfreeze) | +0.035078 |
+| Epoch 30 → 31 (Phase 3 unfreeze) | +0.032743 |
+
+### vs Variation 1 Attempt 3 (the only changed axis)
+
+| Metric | V1-A3 (`lr_scale` 0.01) | V2 (`lr_scale` 0.1) | Δ |
+|--------|------------------------|---------------------|---|
+| `val_macro_f1` | 0.894619 | **0.929634** | **+0.035015** |
+| `val_accuracy` | 0.916836 | 0.950101 | +0.033265 |
+| `val_min_class_accuracy` | 0.827586 | 0.857143 | +0.029557 |
+| Phase-1 mean `val_macro_f1` | 0.587017 | 0.574852 | −0.012165 |
+| Phase-2 mean `val_macro_f1` | 0.799992 | 0.797725 | −0.002267 |
+| Phase-3 mean `val_macro_f1` | 0.876272 | 0.915468 | **+0.039196** |
+
+**Attribution:** phases 1–2 have identical configs in both runs and land within run-to-run
+noise of each other; the entire gain appears in phase 3, the only phase whose LR scale
+changed. The phase-3 mean of this run (0.9155) exceeds the previous run's best single epoch
+(0.8946). Phase-3 epoch time rose from ~256 s to ~292 s — the expected cost of the full
+backbone actually receiving gradients.
+
+---
+
+## Decision — 2026-11-19
+
+**Winning configuration:** `configs/sense_full_lr3e-4_p3lr0.1.yaml`
+**Winning run:** `runs/sense_full_lr3e-4_p3lr0.1/20261119T063459Z`
+**Best checkpoint:** `checkpoints/best.pth`, epoch 45
+
+| Rank | Configuration | Best epoch | `val_macro_f1` | `val_accuracy` | `val_min_class_accuracy` |
+|------|---------------|-----------|----------------|----------------|--------------------------|
+| 1 | `sense_full_lr3e-4_p3lr0.1` (V2) | 45 | **0.929634** | 0.950101 | 0.857143 |
+| 2 | `sense_full_lr3e-4` (V1-A3) | 41 | 0.894619 | 0.916836 | 0.827586 |
+| 3 | `sense_full` (Run 1) | 49 | 0.876609 | 0.898174 | 0.770492 |
+
+Margin over the runner-up: **+0.035015** — seven times the 0.005 tie window, so no
+tie-breaker is required. Cumulative improvement over Run 1: **+0.053025** macro F1.
+
+Selected from saved `best.pth` checkpoints only; the test split was not used at any point in
+the sweep. The winner is named here in writing before any test-split evaluation, per the
+Evaluation Strategy in `Final_plan.md`.
+
+---
+
 ### How the winner is selected
 
 Per the Evaluation Strategy in `Final_plan.md`: the configuration with the **highest
@@ -210,10 +406,12 @@ explicitly in writing before any test-split evaluation is performed.
 
 ### What evidence will be generated
 
-- A comparison plot of `val_macro_f1` vs. epoch for Run 1 and the surviving Variation 1
-  attempt, saved to `results/hparam_sweep/comparison_plot.png`.
+- A comparison plot of `val_macro_f1` vs. epoch for Run 1, Variation 1 Attempt 3 and
+  Variation 2, saved to `results/hparam_sweep/comparison_plot.png`.
+  *(Outstanding — not yet generated.)*
 - A summary table saved to `results/hparam_sweep/summary_table.csv` with one row per run:
   config, best epoch, best `val_macro_f1`, best `val_accuracy`, best
   `val_min_class_accuracy`, phase-mean macro F1 (phases 1–3), and total wall time.
+  *(Outstanding — not yet generated.)*
 - The winning configuration stated in writing in this file under a "Decision" section,
-  with justification referencing the above evidence.
+  with justification referencing the above evidence. *(Done — see "Decision — 2026-11-19".)*

@@ -1,0 +1,28 @@
+# configs/sense_full_lr3e-4_p3lr0.3.yaml
+# P7.3 Variation 3 — single-axis test: phase-3 backbone LR scale 0.1 -> 0.3.
+#
+# V2 (0.01 -> 0.1) gained +0.0350 val macro F1 over V1-A3, with the entire gain
+# confined to phase 3 (phase-1 and phase-2 means unchanged within run-to-run
+# noise). This run tests whether that response is still rising by taking the
+# next step: backbone nominal LR 3e-5 -> 9e-5, which lands just below the 1e-4
+# at which the ResNet18 baseline fine-tunes its entire network.
+#
+# Scope of lr_scale: it multiplies the backbone parameter group only. Head,
+# fusion, self-attention and text-encoder parameters stay at base_lr (3e-4), so
+# the backbone remains 3.3x below the head and ~11x below the 1e-3 that
+# diverged twice.
+#
+# Note on actual vs nominal LR: the cosine schedule is already at ~0.32 of peak
+# by epoch 31, so the real phase-3 backbone LR starts near 2.9e-5 (V2 started
+# near 9.7e-6) and decays toward the eta_min floor.
+#
+# Everything else (seed, epochs, batch, alpha/beta, class_weighted, phase
+# boundaries, unfreeze schedule, weight_decay, scheduler) is inherited
+# unchanged from sense_full_lr3e-4.yaml.
+
+_base_: sense_full_lr3e-4.yaml
+
+training:
+  phases:
+    phase3:
+      lr_scale: 0.3
