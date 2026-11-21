@@ -4,9 +4,18 @@
 # than Run 1 (best macro F1 0.8766) without entering the fp16 forward-overflow window
 # that killed 1e-3 in two independent attempts (epochs 6 and 4-5).
 # Inherits everything else (alpha, beta, batch_size, image_size, phase boundaries,
-# patience, weight_decay, scheduler_eta_min_ratio, lr_scale per phase) unchanged.
+# patience, weight_decay, scheduler_eta_min_ratio) unchanged.
+#
+# HISTORICAL RECORD — do not remove the phase3 pin below.
+# This run was trained before the P7.3 winner was promoted into sense_full.yaml
+# (2026-11-21). sense_full.yaml now defaults to phase3.lr_scale 0.3, so the value
+# this variation actually used (0.01, inherited from base.yaml at the time) is
+# pinned here to keep this config reproducing V1-A3 (run 20261117T172308Z).
 
 _base_: sense_full.yaml
 
 training:
   base_lr: 3.0e-4
+  phases:
+    phase3:
+      lr_scale: 0.01          # pinned: value in effect for this run

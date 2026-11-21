@@ -148,3 +148,11 @@ class TestAblationConfigs:
             assert cfg["model"]["classifier"]["learnable_temperature"] is True
             assert cfg["data"]["image_size"] == 224
             assert cfg["training"]["batch_size"] == 16
+            # P7.3 winner promoted into sense_full.yaml (2026-11-21): every ablation
+            # must train with the winning recipe, not the old 1e-4 / 0.01 one.
+            assert cfg["training"]["base_lr"] == pytest.approx(
+                3e-4
+            ), f"{cfg_name} lacks the promoted base_lr (3e-4)"
+            assert cfg["training"]["phases"]["phase3"]["lr_scale"] == pytest.approx(
+                0.3
+            ), f"{cfg_name} lacks the promoted phase-3 lr_scale (0.3)"

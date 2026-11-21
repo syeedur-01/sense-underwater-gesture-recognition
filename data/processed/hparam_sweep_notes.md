@@ -12,6 +12,11 @@ Tie-break rule: highest `val_macro_f1`; `val_min_class_accuracy` as tie-breaker 
 **Run folder:** `runs/sense_full/20261114T122905Z`  
 **Source file:** `runs/sense_full/20261114T122905Z/metrics.csv`
 
+> Trained from `configs/sense_full.yaml` as it stood **before** the 2026-11-21 promotion
+> (`base_lr` 1.0e-4, `phase3.lr_scale` 0.01); that file now carries the P7.3 winning recipe.
+> The exact configuration this run used is archived at
+> `runs/sense_full/20261114T122905Z/config.yaml`.
+
 ### Best checkpoint
 
 | Field | Value |

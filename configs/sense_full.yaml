@@ -8,6 +8,22 @@
 #   model.classifier.temperature: 0.07  (learnable, log-parametrized, clamped)
 #   model.classifier.learnable_temperature: true
 #   model.text_guidance.encoder_type / encoder_name: sentence_bert / all-MiniLM-L6-v2
+#
+# P7.3 WINNER PROMOTED — 2026-11-21
+#   The P7.3 sweep selected sense_full_lr3e-4_p3lr0.3 as the winning recipe
+#   (run runs/sense_full_lr3e-4_p3lr0.3/20261119T120231Z, best epoch 45,
+#   val macro F1 0.956383). Its two non-default values are now the defaults here:
+#     training.base_lr                  1.0e-4 -> 3.0e-4
+#     training.phases.phase3.lr_scale   0.01   -> 0.3   (was inherited from base.yaml)
+#   Rationale and evidence: data/processed/hparam_sweep_notes.md (Decision section).
+#   Frozen checkpoint:      checkpoints/sense_final_standard_split.pth
+#                           (data/processed/final_checkpoint_manifest.md)
+#
+#   Every Phase 10 ablation inherits this file, and Phase 9's LOSO folds use it
+#   verbatim (Final_plan.md), so this is the recipe those phases must train with.
+#   The pre-promotion (Run 1) recipe is archived at
+#   runs/sense_full/20261114T122905Z/config.yaml. The sweep configs pin their own
+#   historical phase-3 lr_scale so they keep reproducing the runs they describe.
 
 _base_: base.yaml
 
@@ -43,8 +59,11 @@ data:
 training:
   epochs: 50
   batch_size: 16
-  base_lr: 1.0e-4
+  base_lr: 3.0e-4             # P7.3 winner (was 1.0e-4 for Run 1)
   loss:
     alpha: 0.7
     beta: 0.3
     class_weighted: true        # inverse-frequency CE weights for all SENSE runs
+  phases:
+    phase3:
+      lr_scale: 0.3           # P7.3 winner (was 0.01, inherited from base.yaml)

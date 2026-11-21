@@ -1,3 +1,17 @@
+# configs/sense_full_lr1e-3.yaml
+# P7.3 Variation 1, Attempts 1-2: base_lr 1e-3. Diverged twice in phase 2
+# (epoch 6 fp16 forward overflow; epoch 5 batch 243 guard abort), so this value is
+# outside the pipeline's stability region. Kept as the record of those attempts.
+#
+# HISTORICAL RECORD — do not remove the phase3 pin below.
+# Trained before the P7.3 winner was promoted into sense_full.yaml (2026-11-21),
+# when phase3.lr_scale still resolved to 0.01 from base.yaml. Pinned so this config
+# keeps reproducing the failed attempts as they were actually run.
+
 _base_: sense_full.yaml
+
 training:
   base_lr: 1.0e-3
+  phases:
+    phase3:
+      lr_scale: 0.01          # pinned: value in effect for this run
