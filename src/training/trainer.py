@@ -110,6 +110,11 @@ class PhaseController:
     each epoch; on a phase boundary it rebuilds the optimizer parameter groups
     at the new learning rate.
 
+    Per phase, ``lr_scale`` multiplies the backbone parameter group and the
+    optional ``head_lr_scale`` (default 1.0) multiplies the non-backbone
+    group. The latter exists for recipes that lower the entire network at
+    unfreeze; SENSE uses the default and is unaffected.
+
     Args:
         model:    SENSE model (must expose ``.encoder`` = BiChannelEncoder).
         cfg:      Full config dict loaded from YAML.
@@ -144,6 +149,13 @@ class PhaseController:
                     "freeze_backbone": bool(p.get("freeze_backbone", True)),
                     "unfreeze_last_n_blocks": p.get("unfreeze_last_n_blocks", None),
                     "lr_scale": float(p.get("lr_scale", 1.0)),
+                    # Optional per-phase scale for the non-backbone ("head") group.
+                    # Defaults to 1.0, so every existing config is unaffected. It
+                    # exists so a run can reproduce a recipe that lowers the whole
+                    # network at unfreeze (e.g. the Phase 4 baseline's 0.1x), which
+                    # the head-at-base_lr / backbone-at-base_lr*lr_scale split
+                    # cannot express on its own.
+                    "head_lr_scale": float(p.get("head_lr_scale", 1.0)),
                 }
             )
         if not self._phases:
@@ -179,12 +191,13 @@ class PhaseController:
         phase = self._phases[new_phase_idx]
         logger.info(
             "Phase transition -> %s (epoch %d): freeze_backbone=%s, "
-            "unfreeze_last_n_blocks=%s, lr_scale=%.4f",
+            "unfreeze_last_n_blocks=%s, lr_scale=%.4f, head_lr_scale=%.4f",
             phase["name"],
             epoch,
             phase["freeze_backbone"],
             phase["unfreeze_last_n_blocks"],
             phase["lr_scale"],
+            phase["head_lr_scale"],
         )
         self._apply_freeze(phase)
         self._rebuild_optimizer(phase, epoch=epoch)
@@ -240,7 +253,7 @@ class PhaseController:
 
         Strategy:
           - Non-backbone params (head, text encoder, fusion, self-attention,
-            projection layers) -> base_lr x 1.0  (always trainable)
+            projection layers) -> base_lr x head_lr_scale (default 1.0)
           - Backbone params that now require grad -> base_lr x lr_scale
           - Learning rates are scaled by the cosine factor for the current epoch
             so that unfreezing does not cause an abrupt learning rate spike.
@@ -248,6 +261,7 @@ class PhaseController:
         train_cfg = self.cfg.get("training", {})
         base_lr = float(train_cfg.get("base_lr", train_cfg.get("lr", 1e-4)))
         lr_scale = phase["lr_scale"]
+        head_lr_scale = float(phase.get("head_lr_scale", 1.0))
         branches = self._get_branches()
 
         # Collect backbone parameter ids (from unique branches only)
@@ -291,8 +305,8 @@ class PhaseController:
             param_groups.append(
                 {
                     "params": head_params,
-                    "lr": base_lr * decay_factor,
-                    "initial_lr": base_lr,
+                    "lr": (base_lr * head_lr_scale) * decay_factor,
+                    "initial_lr": base_lr * head_lr_scale,
                 }
             )
         if backbone_params:
@@ -324,7 +338,7 @@ class PhaseController:
         logger.debug(
             "Optimizer rebuilt: %d head params (lr=%.2e), %d backbone params (lr=%.2e).",
             len(head_params),
-            base_lr * decay_factor,
+            (base_lr * head_lr_scale) * decay_factor,
             len(backbone_params),
             (base_lr * lr_scale) * decay_factor,
         )

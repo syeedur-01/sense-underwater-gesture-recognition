@@ -91,6 +91,102 @@ class TestBaselineRegression:
         unfrozen = sum(1 for p in model.backbone.parameters() if p.requires_grad)
         assert unfrozen == total, "unfreeze_backbone() did not unfreeze all backbone params"
 
+    def test_trainer_wrapper_contract(self):
+        """
+        P11.1 baseline re-run: the Phase 4 model, wrapped for the Phase 6 Trainer,
+        must keep identical weights/keys and pick up the Trainer-specific overrides.
+        """
+        from src.config import load_merged_config
+        from src.models.baseline_adapter import SingleImageTrainerModel
+        from src.models.factory import build_model
+
+        cfg = load_merged_config("configs/baseline_resnet18_trainer.yaml")
+        cfg["model"]["pretrained"] = False  # no weight download in unit tests
+
+        # The factory must dispatch this config to the wrapper, not to SENSE.
+        model = build_model(cfg).to(DEVICE)
+        assert isinstance(model, SingleImageTrainerModel)
+        assert model.stereo_enabled is False
+
+        # Weights stay Phase 4-compatible: identical keys, and a Phase 4 state
+        # dict loads without modification (keeps evaluate_baseline.py working).
+        plain = SingleImageClassifier(pretrained=False, num_classes=NUM_CLASSES)
+        assert list(model.state_dict()) == list(plain.state_dict())
+        model.load_state_dict(plain.state_dict())
+
+        # The Trainer calls model(left, right); the right image must be ignored.
+        with torch.no_grad():
+            logits = model(_rand_img(BATCH, 224, 224), _rand_img(BATCH, 224, 224))
+        assert logits.shape == (BATCH, NUM_CLASSES)
+
+        # Overrides that would otherwise be inherited with the wrong value.
+        assert cfg["training"]["loss"]["class_weighted"] is False
+        assert cfg["training"]["t_max"] == 20
+        assert cfg["training"]["early_stopping_patience"] == 20
+        assert cfg["training"]["scheduler_eta_min_ratio"] == 0.0
+        assert cfg["training"]["phases"]["phase2"]["head_lr_scale"] == pytest.approx(0.1)
+
+        # Unknown architectures must fail loudly rather than fall back to SENSE.
+        cfg["model"]["architecture"] = "not_a_model"
+        with pytest.raises(ValueError, match="Unknown model.architecture"):
+            build_model(cfg)
+
+    def test_trainer_phase_schedule_matches_phase4(self):
+        """
+        Phase 1 trains the head only; phase 2 unfreezes everything and lowers the
+        head to the backbone LR (head_lr_scale 0.1), reproducing Phase 4's
+        uniform 0.1x at unfreeze.
+        """
+        from src.models.baseline_adapter import SingleImageTrainerModel
+        from src.training.scheduler import build_optimizer, build_scheduler
+        from src.training.trainer import PhaseController
+
+        model = SingleImageTrainerModel(pretrained=False, num_classes=NUM_CLASSES).to(DEVICE)
+        cfg = {
+            "training": {
+                "base_lr": 1e-3,
+                "epochs": 20,
+                "batch_size": 32,
+                "optimizer": "adamw",
+                "scheduler": "cosine_annealing",
+                "t_max": 20,
+                "scheduler_eta_min_ratio": 0.0,
+                "phases": {
+                    "phase1": {"epochs": [1, 5], "freeze_backbone": True, "lr_scale": 1.0},
+                    "phase2": {
+                        "epochs": [6, 20],
+                        "freeze_backbone": False,
+                        "unfreeze_last_n_blocks": None,
+                        "lr_scale": 0.1,
+                        "head_lr_scale": 0.1,
+                    },
+                },
+            }
+        }
+        optimizer = build_optimizer(model, cfg)
+        scheduler = build_scheduler(optimizer, cfg)
+        ctrl = PhaseController(model=model, cfg=cfg, optimizer=optimizer, scheduler=scheduler)
+
+        # Phase 1 — backbone frozen, head trainable.
+        ctrl.step(1)
+        assert not any(p.requires_grad for p in model.backbone.parameters())
+        backbone_ids = {id(p) for p in model.backbone.parameters()}
+        trainable = [p for p in model.parameters() if p.requires_grad]
+        assert trainable, "Phase 1 must train the classifier head"
+        assert all(id(p) not in backbone_ids for p in trainable)
+        assert len(optimizer.param_groups) == 1
+
+        # Phase 2 — everything trainable, head and backbone at the same LR.
+        ctrl.step(6)
+        assert all(p.requires_grad for p in model.backbone.parameters())
+        assert len(optimizer.param_groups) == 2
+        head_lr = optimizer.param_groups[0]["lr"]
+        backbone_lr = optimizer.param_groups[1]["lr"]
+        assert head_lr == pytest.approx(backbone_lr, rel=1e-12), (
+            f"head_lr_scale 0.1 should match the backbone LR; "
+            f"got head={head_lr}, backbone={backbone_lr}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # P5.1 — BiChannelEncoder

@@ -1,0 +1,57 @@
+# configs/baseline_resnet18_trainer.yaml
+# Phase 4 ResNet18 baseline, re-run through the Phase 6 Trainer (P11.1).
+#
+# Why this file exists
+# --------------------
+# The Phase 4 baseline was trained by scripts/train_baseline.py, which selected
+# its checkpoint by validation ACCURACY and never logged macro F1. SENSE is
+# trained by the Phase 6 Trainer, which selects by validation MACRO F1 (min-class
+# accuracy as tie-breaker). Reporting both in one table would compare two
+# different selection rules. Final_plan.md:1018 and
+# data/processed/baseline_results.md:71-74 both require this re-run so the
+# baseline row comes from the same machinery.
+#
+# Nothing about the model, the data, or the recipe changes: ImageNet-pretrained
+# ResNet18, left image only, raw 224x224 images, 17 classes, 20 epochs, batch 32,
+# base_lr 1e-3, 5 frozen epochs then full unfreeze at 0.1x, unweighted CE.
+# The parent file remains the untouched Phase 4 record; this child adds only
+# what the Trainer needs to express that recipe faithfully.
+#
+# Trainer-specific settings (all four inherited defaults would be wrong):
+#   training.t_max: 20
+#       base.yaml sets 50. The cosine would still be at ~63% of peak at epoch 20
+#       instead of decaying to the floor.
+#   training.early_stopping_patience: 20
+#       base.yaml sets 10, which can stop at epoch 16 (patience resets at the
+#       epoch-6 unfreeze). The Phase 4 run peaked at epoch 17, so 20 guarantees
+#       the full budget.
+#   training.scheduler_eta_min_ratio: 0.0
+#       Phase 4's cosine decayed to exactly 0.0; the inherited 0.01 floors it.
+#   training.loss.class_weighted: false
+#       SenseLoss.from_config() defaults this to True when the key is absent.
+#       Final_plan.md:725 requires unweighted CE for baseline comparability with
+#       the published numbers, but the parent config never actually set the key.
+#
+#   training.phases.phase2.head_lr_scale: 0.1
+#       The Trainer puts the head at base_lr and the backbone at base_lr*lr_scale,
+#       so lr_scale alone would leave the head at 1e-3 (10x Phase 4's 1e-4) after
+#       unfreeze. head_lr_scale 0.1 restores Phase 4's "everything at 0.1x" while
+#       leaving the Phase 1 head LR at 1e-3, exactly as the original run did.
+#
+# Expected runtime: ~20 minutes on the RTX 4060 (ResNet18 is ~8x lighter than
+# SENSE). This run never reads a test-split CSV.
+
+_base_: baseline_transfer_learning.yaml
+
+model:
+  architecture: single_image     # selects SingleImageTrainerModel in src/models/factory.py
+
+training:
+  t_max: 20
+  early_stopping_patience: 20
+  scheduler_eta_min_ratio: 0.0
+  loss:
+    class_weighted: false        # unweighted CE, for literature comparability
+  phases:
+    phase2:
+      head_lr_scale: 0.1         # reproduce Phase 4's uniform 0.1x at unfreeze

@@ -1,7 +1,7 @@
 """
 scripts/train.py
 ================
-P6.9 — Command-line training entry point for SENSE.
+P6.9 — Command-line training entry point for SENSE (and the single-image baseline).
 
 Usage (from project root with venv active):
     python scripts/train.py --config configs/sense_full.yaml
@@ -12,7 +12,8 @@ Usage (from project root with venv active):
 The script:
   1. Loads and merges the YAML config (with base.yaml inheritance).
   2. Seeds RNGs via set_seed().
-  3. Builds SENSE from config.
+  3. Builds the model from config via src.models.factory.build_model
+     (SENSE by default; model.architecture may select another architecture).
   4. Runs Trainer.fit() — training on train split, evaluation on val split only.
   5. Produces a full experiment record (all nine P6.5 artifacts) in
      runs/{experiment_name}/{timestamp}/.
@@ -33,7 +34,7 @@ sys.path.insert(0, str(ROOT))
 import torch  # noqa: E402
 
 from src.config import _deep_merge, load_merged_config  # noqa: E402
-from src.models.sense import SENSE  # noqa: E402
+from src.models.factory import build_model  # noqa: E402
 from src.training.trainer import Trainer  # noqa: E402
 from src.utils.seed import set_seed  # noqa: E402
 
@@ -47,7 +48,7 @@ __all__ = ["_deep_merge", "load_merged_config", "main"]
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Train SENSE gesture recognition model.",
+        description="Train a gesture recognition model (SENSE or the single-image baseline).",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument(
@@ -111,8 +112,9 @@ def main() -> None:
     # (The key may exist in config for documentation purposes; we simply
     #  don't pass it here — it's only used in Phase 8 evaluation.)
 
-    # 6. Build model
-    model = SENSE.from_config(cfg)
+    # 6. Build model (SENSE by default; model.architecture selects an alternative,
+    #    e.g. "single_image" for the ResNet18 baseline)
+    model = build_model(cfg)
 
     # 7. Device
     device = args.device
