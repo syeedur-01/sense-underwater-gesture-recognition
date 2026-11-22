@@ -58,3 +58,7 @@ Thumbs.db
 .vscode/
 *.suo
 *.user
+
+# Academic thesis knowledge base (local only — never committed)
+docs/thesis/
+AGENTS.md
