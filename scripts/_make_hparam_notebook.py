@@ -594,7 +594,111 @@ print(f"VAL MACRO F1      : {winner['best_val_macro_f1']:.6f}")
 print("MANIFEST          : data/processed/final_checkpoint_manifest.md")
 """
 
-C_SECTION6 = """## 6. Summary and hand-off
+C_SECTION5B = """## 6. Selected-model training curves
+
+The sections above compare configurations. This one looks inside the selected run.
+
+The plot shows loss, accuracy, macro F1, and minimum class accuracy against epoch over the
+full fifty-epoch budget, with the recorded training stages shaded and the selected checkpoint
+marked. The selected epoch is the one the trainer saved, not necessarily the epoch with the
+highest accuracy - the last two panels are what the selection rule reads.
+
+Training accuracy is not recorded by the training loop, so the accuracy panel shows the
+validation curve only.
+"""
+
+C_CURVES = """import matplotlib.ticker as mticker
+
+sel_dir = Path(winner["run_dir"])
+if not sel_dir.is_absolute():
+    sel_dir = ROOT / sel_dir
+sel_metrics = pd.read_csv(sel_dir / "metrics.csv").sort_values("epoch").reset_index(drop=True)
+sel_cfg = load_merged_config(sel_dir / "config.yaml")
+
+max_epoch = int(sel_metrics["epoch"].max())
+spans = []
+for key, info in sorted(
+    sel_cfg["training"]["phases"].items(), key=lambda kv: kv[1]["epochs"][0]
+):
+    start, end = info["epochs"][0], min(info["epochs"][1], max_epoch)
+    if start <= end:
+        spans.append((key, start, end))
+
+best_epoch = int(winner["best_epoch"])
+
+fig, axes = plt.subplots(2, 2, figsize=(14, 9))
+panels = [
+    ("train_loss", "val_loss", "Loss", "Cross-entropy loss"),
+    (None, "val_accuracy", "Accuracy", "Accuracy"),
+    (None, "val_macro_f1", "Macro F1", "Macro F1"),
+    (None, "val_min_class_accuracy", "Minimum class accuracy", "Minimum class accuracy"),
+]
+
+for ax, (train_col, val_col, title, ylabel) in zip(axes.ravel(), panels):
+    for k, (_, start, end) in enumerate(spans):
+        if k % 2 == 0:
+            ax.axvspan(start - 0.5, end + 0.5, color="0.92", zorder=0)
+    if train_col is not None:
+        ax.plot(sel_metrics["epoch"], sel_metrics[train_col], linewidth=2, label="train")
+    ax.plot(
+        sel_metrics["epoch"], sel_metrics[val_col],
+        linewidth=2, linestyle="--", label="validation",
+    )
+    ax.axvline(best_epoch, color="crimson", linewidth=1.3, alpha=0.75)
+    ax.set_title(title, fontsize=12, fontweight="bold")
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel(ylabel)
+    if title == "Accuracy":
+        ax.yaxis.set_major_formatter(mticker.PercentFormatter(xmax=1.0))
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(loc="lower right")
+
+for k, (_, start, end) in enumerate(spans):
+    axes[0, 0].text(
+        (start + end) / 2,
+        1.0,
+        f"stage {k + 1}",
+        transform=axes[0, 0].get_xaxis_transform(),
+        ha="center",
+        va="top",
+        fontsize=9,
+        color="0.35",
+    )
+
+fig.suptitle(
+    "Selected configuration - training and validation curves (validation partition)",
+    fontsize=13,
+    fontweight="bold",
+)
+plt.tight_layout()
+
+out_path = RESULTS / "selected_model_training_curves.png"
+plt.savefig(out_path, dpi=150, bbox_inches="tight")
+plt.show()
+print("saved", out_path.relative_to(ROOT))
+
+probe_epochs = [1] + [start for _, start, _ in spans[1:]] + [best_epoch, max_epoch]
+probe_epochs = sorted(set(probe_epochs))
+display(
+    sel_metrics.loc[
+        sel_metrics["epoch"].isin(probe_epochs),
+        [
+            "epoch", "train_loss", "val_loss", "val_accuracy",
+            "val_macro_f1", "val_min_class_accuracy",
+        ],
+    ].round(4)
+)
+
+sel_row = sel_metrics.loc[sel_metrics["epoch"] == best_epoch].iloc[0]
+print()
+print(f"selected epoch          : {best_epoch}")
+print(f"macro F1 at selection   : {sel_row['val_macro_f1']:.6f}")
+print(f"minimum class acc.      : {sel_row['val_min_class_accuracy']:.6f}")
+print(f"epochs completed        : {max_epoch} / {int(sel_cfg['training']['epochs'])}")
+print(f"stages recorded         : {', '.join(key for key, _, _ in spans)}")
+"""
+
+C_SECTION6 = """## 7. Summary and hand-off
 
 **What was compared.** Three single-axis variations, all on the learning-rate axis: base LR
 1e-4 -> 3e-4, then phase-3 backbone `lr_scale` 0.01 -> 0.1 -> 0.3. The configuration diff in
@@ -647,6 +751,8 @@ def build_notebook() -> dict:
         md(C_SECTION4B),
         md(C_SECTION5),
         code(C_WINNER),
+        md(C_SECTION5B),
+        code(C_CURVES),
         md(C_SECTION6),
     ]
 
