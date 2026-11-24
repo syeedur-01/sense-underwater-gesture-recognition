@@ -1,0 +1,23 @@
+# configs/control_selected_recipe.yaml
+# E12 - Backbone-matched control at the selected recipe.
+#
+# Same data, optimisation settings, schedule, and seed as the selected
+# configuration (configs/sense_full_lr3e-4_p3lr0.3.yaml); stereo, text guidance,
+# and enhancement are disabled. The three switches below are the only
+# differences, which is what makes the module contribution separable from the
+# recipe contribution.
+#
+# The earlier control (configs/sense_neither.yaml, E8) inherited the reference
+# recipe instead, so its comparison against the reference-recipe model measured
+# the modules at a recipe the sweep later showed to be suboptimal.
+
+_base_: sense_full_lr3e-4_p3lr0.3.yaml
+
+model:
+  stereo:
+    enabled: false
+  text_guidance:
+    enabled: false
+
+data:
+  enhancement_method: none
