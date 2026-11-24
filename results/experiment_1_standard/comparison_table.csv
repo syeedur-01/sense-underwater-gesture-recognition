@@ -1,0 +1,4 @@
+Metric,SENSE (selected configuration),Single-image ResNet-18 baseline,Backbone-matched control,diff vs baseline,within macro-F1 band vs baseline,diff vs control,within macro-F1 band vs control
+Accuracy,0.956592,0.955781,0.94645,0.000811,not applicable,0.010142,not applicable
+Macro F1,0.939838,0.932913,0.929668,0.006925,yes,0.01017,yes
+Minimum class accuracy,0.857143,0.714286,0.828571,0.142857,not applicable,0.028571,not applicable
