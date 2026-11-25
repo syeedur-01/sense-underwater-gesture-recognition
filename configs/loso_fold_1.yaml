@@ -1,0 +1,18 @@
+# configs/loso_fold_1.yaml
+# LOSO fold 1: held-out scenario biograd-A.
+#
+# Leave-one-scenario-out fold 1 of 8. Training and validation exclude
+# biograd-A entirely; its samples form the test partition and are read only
+# after this fold's checkpoint has been frozen by the training loop.
+#
+# Inherits the selected recipe unchanged: configs/sense_full.yaml already carries
+# the promoted P7.3 settings (base learning rate 3e-4, stage-3 backbone multiplier
+# 0.3). Only the three split paths differ, so differences between folds are
+# attributable to the held-out scenario rather than to the optimisation settings.
+
+_base_: sense_full.yaml
+
+data:
+  split_train: ./data/processed/splits/scenario_holdout_1_train.csv
+  split_val:   ./data/processed/splits/scenario_holdout_1_val.csv
+  split_test:  ./data/processed/splits/scenario_holdout_1_test.csv
