@@ -290,6 +290,11 @@ def parse_args() -> argparse.Namespace:
         help="Human-readable model name used in the report title.",
     )
     parser.add_argument(
+        "--partition-label",
+        default="standard test partition",
+        help="Name of the evaluated partition, used in figure titles.",
+    )
+    parser.add_argument(
         "--batch-size",
         type=int,
         default=None,
@@ -434,14 +439,14 @@ def main() -> None:
         confusion,
         class_names=class_names,
         save_path=output_dir / "confusion_matrix.png",
-        title=f"Confusion matrix - {label} (standard test partition)",
+        title=f"Confusion matrix - {label} ({args.partition_label})",
         normalize=False,
     )
     plot_confusion_matrix(
         confusion,
         class_names=class_names,
         save_path=output_dir / "confusion_matrix_norm.png",
-        title=f"Row-normalised confusion matrix - {label} (standard test partition)",
+        title=f"Row-normalised confusion matrix - {label} ({args.partition_label})",
         normalize=True,
     )
     write_per_class_csv(output_dir / "per_class.csv", per_class_metrics, confusion, class_names)
