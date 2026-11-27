@@ -8,18 +8,41 @@
 
 This is the single source of truth for building, training, evaluating, and publishing SENSE. Work through phases **in order**. Every task has an ID (`P{phase}.{task}`) so a future prompt can say **"Implement Phase 3 Task 2"** and the scope is unambiguous. Each task specifies **Objective, Depends on, Steps, Deliverable, Verification**. A task is not "done" until its Verification step actually passes — not until it "runs without crashing."
 
-This revision strengthens the original engineering blueprint with the research methodology a thesis committee and a journal reviewer will both expect: explicit research questions and hypotheses, a defined evaluation/model-selection protocol, leakage-proof splitting (applied to P2.2/P2.3/P6.7/P7.2/P8.2/P9.1), a disciplined hyperparameter strategy, statistical validation across folds, full experiment tracking, and a complete inventory of publication artifacts. Phase 0 and Phase 1 are retained here in full, unabridged detail — identical in content to what has already been implemented and verified — so this document remains a single, complete, standalone reference rather than requiring cross-referencing an earlier draft. Nothing about the phase order, numbering, task content, or engineering philosophy has changed from what was already built or specified — this is strictly an enrichment pass from Phase 2 onward, not a rewrite.
+This revision strengthens the original engineering blueprint with the research methodology a thesis committee and a journal reviewer will both expect: explicit research questions and hypotheses, a defined evaluation/model-selection protocol, leakage-proof splitting (applied to P2.2/P2.3/P6.7/P7.2/P8.2/P9.1), a disciplined hyperparameter strategy, statistical validation across folds, full experiment tracking, and a complete inventory of publication artifacts. Phase 0 and Phase 1 are retained here in full, unabridged detail — identical in content to what has already been implemented and verified — so this document remains a single, complete, standalone reference rather than requiring cross-referencing an earlier draft. Nothing about the phase order, numbering, task content, or engineering philosophy has changed from what was already built or specified — this is strictly an enrichment pass from Phase 2 onward, not a rewrite. The reconciliation pass recorded in the first changelog below appends executed outcomes to the tasks and marks superseded text as superseded; it changes no phase order, task number, or experiment.
 
-**Status note:** Phases 0–5 are implemented and verified. Phase 0 (environment), Phase 1 (data audit), Phase 2 (EDA, splits, pipeline), Phase 3 (enhancement cache — FUnIE-GAN and WaterNet), Phase 4 (ResNet18 baseline; GoogLeNet was not reproduced — published number only), and Phase 5 (SENSE model components, assembly, all four ablation-mode switches, and the P5.8 VRAM probe — image size frozen at 224, batch size frozen at 16 per `configs/base.yaml`). Phase 6 is next.
+**Status note (reconciled 25 November 2026):** Phases 0–8 are implemented and verified. Phase 0 (environment), Phase 1 (data audit), Phase 2 (EDA, splits, pipeline), Phase 3 (enhancement cache — FUnIE-GAN and WaterNet), Phase 4 (single-image baseline, retrained under the shared protocol as E9; GoogLeNet was not reproduced — published number only), Phase 5 (SENSE model components, assembly, all four ablation-mode switches, and the P5.8 VRAM probe — image size frozen at 224, batch size frozen at 16 per `configs/base.yaml`), Phase 6 (trainer, loss, scheduler, checkpointing, experiment tracking), Phase 7 (four-configuration hyperparameter study and the frozen standard-split checkpoint at epoch 45), and Phase 8 (metrics module, evaluation script, and the single standard test-partition evaluation of both frozen models, E11). Phase 9's evaluation harness is implemented and validated on synthetic artefacts; the eight fold trainings are in progress and no fold result is reportable yet. Phase 10's backbone-matched control at the selected recipe (E12) is complete; the remaining ablation arms are not started. Phases 11–13 are not started. This note is the authoritative statement of what exists; the phase sections below retain their original task text, with outcomes appended where a task has been executed.
 
 ---
 
-## Revision Changelog (this pass)
+## Revision Changelog — Reconciliation Pass (25 November 2026)
+
+This pass makes the document agree with what has actually been executed and decided since it was last revised on 19 November 2026. It changes no experiment, no architecture, and no task numbering. Where a task has been executed, its outcome is appended beneath the original instruction and the original instruction is left intact; where a decision has superseded the original text, the superseded text is marked as such rather than deleted silently. The numbered list below records each correction.
+
+1. **Status note.** Replaced "Phases 0–5 implemented, Phase 6 next" with the actual position: Phases 0–8 implemented and verified, the Phase 9 harness implemented with fold training in progress, the Phase 10 control arm complete, Phases 11–13 not started.
+2. **Project Snapshot.** Removed a duplicated "17 classes total"; marked the two Yang et al. percentages as unverified pending the primary text; recorded the exact GPU and driver on which the reported runs were executed.
+3. **Research Hypotheses (H1).** Rewrote H1 so that it is tested against measured per-scenario performance rather than against an assumed turbidity/low-light ordering, because the scenario descriptions are unverified and the gesture inventory differs across scenarios.
+4. **Publishable Claims.** Restated Claim 1 as parity on the aggregate metrics plus an advantage on the worst class, and Claim 3 as a reported per-scenario benchmark, because the measured differences do not support the stronger wording the earlier draft used.
+5. **Evaluation Strategy.** Distinguished macro F1 (primary on a single complete partition) from accuracy (primary when LOSO folds are averaged), replaced "0.5 macro-F1 points" with the implemented 0.005 selection window, added the ±0.020 noise band for comparisons between separately trained models, added the per-fold class-coverage column to the reporting convention, and removed inference latency from the reported metrics.
+6. **Phase Index.** Added a Status column recording, phase by phase, what exists.
+7. **Phase 4.** Replaced the description of a baseline whose checkpoint was selected by validation accuracy with the baseline actually used (E9, shared protocol, epoch 19, validation macro F1 0.9420) and recorded that its single test-partition read was performed jointly with the proposed model's in E11.
+8. **Phase 7.** Recorded the executed hyperparameter study (four configurations, stage-3 multiplier selected at 0.3) and the frozen checkpoint's provenance and validation metrics.
+9. **Phase 8.** Recorded E11's outcome, the `--partition-label` option added to the evaluation script, the fact that the inference-time helper is implemented but unused, and the corrected notebook name.
+10. **Phase 9.** Corrected the checkpoint location and epoch budget, described the implemented harness, and added the D21 reporting requirement (per-fold macro F1 over present classes, with coverage and the seventeen-class value beside it).
+11. **Phase 10.** Recorded that the primary control is the one trained at the selected recipe (E12) and that the earlier control (E8) is retained only as recipe-sensitivity evidence.
+12. **Phase 11.** Recorded that the baseline row is the shared-protocol run (E9/E11), that differences must be read against the D18 noise band, and corrected the final-evaluation notebook name.
+13. **Phase 12, 13, Notebooks, Appendices.** Corrected the notebook inventory to the files that exist (including the planned robustness notebook), corrected LOSO checkpoint locations, added the optimisation flags that determine the selected recipe, and updated the non-negotiable checkpoint and final-deliverable lists.
+14. **Dataset scope and split sizes.** Recorded that only real captures are used and that the synthetic distortions in the release are excluded, together with the resulting manifest size and split sizes (P1.2, P2.2), and the per-fold coverage and leakage-audit outcome (P2.3).
+15. **Resolved configuration choices.** Recorded the values of choices the plan had left open: shared stereo-branch weights, frozen class-name embeddings with bidirectional fusion, a learnable temperature, numerical hardening with a divergence guard, and one seed per headline configuration.
+16. **Baseline LOSO.** Recorded that the single-image baseline is not retrained under LOSO and that no baseline cross-scenario claim is made, so that the absence is a stated scope decision rather than an apparent omission.
+
+---
+
+## Revision Changelog — Implementation-Readiness Audit (earlier pass)
 
 This pass corrects the specific issues identified in the final implementation-readiness audit. No methodology, architecture, implementation order, model design, experimental protocol, coding style, task numbering, or deliverable format was changed. No new experiments were introduced. The following corrections were applied:
 
 1. **WaterNet configuration.** Added the missing `configs/sense_waternet.yaml` to the P0.8 directory tree, P0.12's config-creation task (count updated 6 → 7), the Phase 0 deliverables checklist, and P10.1, which now references it explicitly.
-2. **Notebook creation tasks.** Added explicit tasks that build the five previously-orphaned notebooks — P4.4 (`03_baseline_experiment_analysis.ipynb`), P7.5 (`05_hyperparameter_analysis.ipynb`), P8.4 (`06_final_evaluation.ipynb`, Experiment 1 portion), P9.5 (`07_robustness_analysis.ipynb`), P10.5 (`04_ablation_study.ipynb`) — plus P11.4, which finalizes `06_final_evaluation.ipynb` with the full comparison. Each phase's Deliverables Checklist now lists its notebook. The Notebooks table's "Produced in" column now cites the exact task ID for every notebook.
+2. **Notebook creation tasks.** Added explicit tasks that build the five previously-orphaned notebooks — P4.4 (`03_baseline_experiment_analysis.ipynb`), P7.5 (`05_hyperparameter_analysis.ipynb`), P8.4 (`06_final_evaluation.ipynb`, Experiment 1 portion), P9.5 (`07_robustness_analysis.ipynb`), P10.5 (`04_ablation_study.ipynb`) — plus P11.4, which finalizes `06_final_evaluation.ipynb` with the full comparison. Each phase's Deliverables Checklist now lists its notebook. The Notebooks table's "Produced in" column now cites the exact task ID for every notebook. *(Superseded: the executed files are `04_control_experiment_analysis.ipynb`, `07_final_evaluation.ipynb`, and the planned `08_robustness_analysis.ipynb`; see the Notebooks table for the current inventory.)*
 3. **Publishable Claims.** Added a "Publishable Claims" subsection (Claim 1–3) between Research Hypotheses and Evaluation Strategy, mapping directly to the existing RQs/hypotheses/experiments — resolving the previously undefined "three publishable claims" / "Claim 3" references.
 4. **Dependency graph.** Phase 5 now explicitly depends on both Phase 3 and Phase 4 in the Phase Index table (matching Phase 4's own exit criterion, which already gated Phase 5), plus a one-line "Depends on" note added to the Phase 5 section itself.
 5. **Ablation checkpoint count.** Corrected from "3 ablation variants" to the accurate 4 (`ablation_enhancement_none.pth`, `ablation_enhancement_waternet.pth`, `ablation_stereo_mono.pth`, `ablation_text_guidance_none.pth`) in Appendix D and P13.3, with explicit filenames now assigned in P10.1–P10.3 and consolidated in P10.4.
@@ -32,11 +55,11 @@ This pass corrects the specific issues identified in the final implementation-re
 
 ## Project Snapshot
 
-- **Goal:** Robust underwater diver gesture recognition on the CADDY stereo-vision dataset (16 gesture classes + no-gesture (17 classes total) = 17 classes total, 8 real-world scenarios).
-- **Model:** SENSE — bi-channel EfficientNet-B4 stereo encoder → self-attention refinement → cross-modal attention fusion with CADDIAN class text embeddings → cosine-similarity classification head.
-- **Baselines:** Yang et al. transfer learning (90.08% GoogleLeNet / 88.59% ResNet), DARE (95.87% overall / 92% min-class), VT-UHGR (best purely-visual comparator, exact % not published).
+- **Goal:** Underwater diver gesture recognition on the CADDY stereo-vision dataset (16 gesture classes, IDs 0–15, plus one no-gesture class, 17 classes in total; 8 real-world scenarios).
+- **Model:** SENSE — bi-channel EfficientNet-B4 stereo encoder → self-attention refinement → cross-modal attention fusion with CADDIAN class text embeddings → cosine-similarity classification head. 33.57 million unique parameters.
+- **Baselines:** Yang et al. transfer learning (90.08% GoogleLeNet / 88.59% ResNet) `[TO BE VERIFIED: both percentages are quoted from a secondary summary; the primary paper has not been read in full, so neither figure is used in any comparison]`, DARE (95.87% overall / 92% min-class), VT-UHGR (best purely-visual comparator, exact % not published).
 - **Novelty type:** Combinational/integrative — first pipeline combining (a) underwater image enhancement preprocessing, (b) explicit stereo depth fusion, (c) semantic text guidance, evaluated with (d) systematic cross-scenario robustness testing on CADDY.
-- **Hardware:** RTX 4060, 8GB VRAM. Mixed precision required at chosen batch sizes.
+- **Hardware:** NVIDIA GeForce RTX 4060 Laptop GPU, 8,188 MiB usable VRAM, driver 621.14 as recorded by the selected run. Mixed precision required at the chosen batch size of 16.
 - **Framework:** PyTorch.
 
 ---
@@ -54,10 +77,10 @@ These are restated from the project's research phase and are the fixed reference
 
 Each hypothesis is directly testable by an experiment already defined later in this plan — no hypothesis is included unless a concrete phase/task produces the evidence to accept or reject it.
 
-- **H1 (→ Experiment 2, Phase 9).** SENSE trained and evaluated with systematic Leave-One-Scenario-Out (LOSO) protocol will show measurably lower accuracy on scenarios exhibiting the most severe turbidity/low-light degradation than on the clearest scenarios, confirming that aggregate (non-scenario-stratified) accuracy reported by prior work (DARE, VT-UHGR) masks real robustness gaps.
-- **H2 (→ Experiment 3, Phase 10).** Underwater image enhancement (FUnIE-GAN/WaterNet) preprocessing will produce a larger accuracy gain in harder scenarios than in easier ones — i.e., the benefit of enhancement is not uniform but widens under degradation. This is tested via a **standard-split, per-scenario breakdown** (see the Phase 10 methodology note), which compares module performance across scenarios using models trained on data from all 8 scenarios — it is **not** a true LOSO holdout result and is not interpreted as one. Rejection of this hypothesis (a flat, uniform benefit) is a legitimate and reportable outcome, not a failed experiment.
+- **H1 (→ Experiment 2, Phase 9).** SENSE trained and evaluated with the systematic Leave-One-Scenario-Out (LOSO) protocol will show a measurable spread in accuracy across the eight held-out scenarios, and that spread will be reported per scenario with each fold's gesture coverage stated. The hypothesis is tested against measured performance, not against an assumed difficulty ordering: the physical conditions of the scenarios are not verified, and the gesture inventory differs across scenarios, so a class-sensitive metric cannot separate difficulty from inventory. Any association between low accuracy and turbidity or low light is therefore stated as a conjecture requiring verification, not as a confirmed mechanism. The claim that aggregate, non-stratified accuracy conceals robustness gaps is supported only to the extent that the measured between-scenario spread exceeds the noise band used for model comparison.
+- **H2 (→ Experiment 3, Phase 10).** Underwater image enhancement (FUnIE-GAN/WaterNet) preprocessing will produce a larger accuracy gain in harder scenarios than in easier ones — i.e., the benefit of enhancement is not uniform but widens under degradation. This is tested via a **standard-split, per-scenario breakdown** (see the Phase 10 methodology note), which compares module performance across scenarios using models trained on data from all 8 scenarios — it is **not** a true LOSO holdout result and is not interpreted as one. Because scenario difficulty is defined by measured performance rather than by a verified water-condition label, the comparison orders scenarios by their observed accuracy. Rejection of this hypothesis (a flat, uniform benefit) is a legitimate and reportable outcome, not a failed experiment.
 - **H3 (→ Experiment 4, Phase 10).** Stereo (bi-channel) fusion will improve accuracy disproportionately on gesture classes that are known to be visually ambiguous from a single 2D projection (e.g., gestures differing primarily by finger/thumb depth ordering), rather than uniformly across all 16 gesture classes.
-- **H4 (→ Experiment 5, Phase 10).** Semantic text guidance will narrow the accuracy gap between SENSE and a visual-only ablation more under harder scenarios than under easier ones, consistent with text embeddings acting as a degradation-invariant anchor rather than a purely additive feature. As with H2, this is tested via a **standard-split, per-scenario breakdown**, not a true LOSO holdout result (see the Phase 10 methodology note).
+- **H4 (→ Experiment 5, Phase 10).** Semantic text guidance will narrow the accuracy gap between SENSE and a visual-only ablation more under harder scenarios than under easier ones, consistent with text embeddings acting as a degradation-invariant anchor rather than a purely additive feature. As with H2, this is tested via a **standard-split, per-scenario breakdown**, not a true LOSO holdout result (see the Phase 10 methodology note), and the scenarios are ordered by their measured accuracy rather than by an unverified water-condition label.
 
 ---
 
@@ -65,9 +88,9 @@ Each hypothesis is directly testable by an experiment already defined later in t
 
 These are the three claims this project is designed to support with evidence, referenced elsewhere in this document (e.g. the Phase 9 exit criterion, P12.3). Each maps directly to RQs/hypotheses/experiments already defined above — no new research direction is introduced here, only a naming of what already exists.
 
-- **Claim 1 — Core recognition performance.** SENSE's combinational architecture (enhancement + stereo fusion + semantic guidance) achieves the highest and most reliable recognition performance among compared methods on CADDY. Evidence: RQ1, Experiment 1 (Phase 8, standard-split result vs. Yang et al./DARE/VT-UHGR), reinforced by the ablation results (Experiments 3–5, Phase 10) showing each component's individual contribution, and by the backbone-matched control (P10.6) which separates backbone/recipe gains from contribution gains.
-- **Claim 2 — Mechanism-specific module benefits.** Each of SENSE's three integrated components provides a targeted, mechanism-specific benefit rather than a generic accuracy bump: enhancement and semantic guidance disproportionately help under harder/degraded scenarios (RQ2/H2, RQ4/H4), while stereo fusion disproportionately helps on depth-ambiguous gesture classes (RQ3/H3). Evidence: Experiments 3, 4, and 5 (Phase 10).
-- **Claim 3 — Cross-scenario robustness benchmark.** Systematic Leave-One-Scenario-Out evaluation reveals real-world robustness gaps across CADDY's 8 scenarios that aggregate, non-scenario-stratified accuracy reporting (as used by DARE and VT-UHGR) conceals. Evidence: RQ1/H1, Experiment 2 (Phase 9).
+- **Claim 1 — Core recognition performance.** SENSE matches the single-image baseline in overall accuracy and macro F1 at the standard split, and attains a materially higher minimum class accuracy, so that no gesture class is left near-unrecognised. Evidence: RQ1, Experiment 1 (E11 — accuracy 0.9566 against 0.9558; macro F1 0.9398 against 0.9329, a difference inside the noise band used for model comparison; minimum class accuracy 0.8571 against 0.7143), reinforced by the backbone-matched control trained at the selected recipe (E12), which shows that the joint contribution of the three modules to macro F1 is not resolvable at this resolution. The claim is deliberately stated as parity on the aggregate metrics plus an advantage on the worst class, not as a uniform win over every comparator.
+- **Claim 2 — Mechanism-specific module benefits.** Each of SENSE's three integrated components provides a targeted, mechanism-specific benefit rather than a generic accuracy bump: enhancement and semantic guidance disproportionately help under harder/degraded scenarios (RQ2/H2, RQ4/H4), while stereo fusion disproportionately helps on depth-ambiguous gesture classes (RQ3/H3). Evidence: Experiments 3, 4, and 5 (Phase 10). This claim is untested until those arms exist.
+- **Claim 3 — Cross-scenario generalisation study.** Systematic Leave-One-Scenario-Out evaluation reports the performance of one fixed recipe on each of CADDY's 8 scenarios in turn, with the gesture coverage of each held-out scenario stated alongside, and thereby makes visible a between-scenario spread that a single aggregate figure does not show. The measured spread is a loss of accuracy rather than a demonstration of robustness, so the result is reported as a limitation and no robustness claim is made (D24). Evidence: RQ1/H1, Experiment 2 (Phase 9). Whether the aggregate figures published by DARE and VT-UHGR conceal a comparable spread cannot be established here, because their per-scenario results were not available to this study.
 
 ---
 
@@ -75,43 +98,47 @@ These are the three claims this project is designed to support with evidence, re
 
 This section is binding for every phase from Phase 6 onward. Any script or notebook that reports a "best" model, a "final" number, or a model-selection decision must follow this protocol exactly, or the number is not reportable in the thesis/paper.
 
-**Primary metric — Macro F1-score.** Chosen over raw accuracy as the primary metric because CADDY's gesture classes are not perfectly balanced (confirmed during EDA, Phase 2) and macro F1 penalizes a model that performs well only on frequent classes while failing on rare ones — which is precisely the failure mode a safety-critical diver-AUV system cannot tolerate.
+**Primary metric — Macro F1-score, on a single complete partition.** For any comparison in which both models are scored on the same partition containing all seventeen classes — the standard test partition above all — macro F1 is the primary metric. It is chosen over raw accuracy because CADDY's gesture classes are not perfectly balanced (confirmed during EDA, Phase 2) and macro F1 penalises a model that performs well only on frequent classes while failing on rare ones, which is precisely the failure mode a safety-critical diver–AUV system cannot tolerate.
 
-**Secondary metric — Overall (micro) accuracy.** Reported for direct comparability with DARE and VT-UHGR, both of which report overall accuracy as their headline number. Always reported alongside macro F1, never alone.
+**Primary metric for cross-scenario aggregation — Overall accuracy.** A LOSO fold's test partition is one entire scenario, and the scenarios do not share a gesture vocabulary. Fold-level macro F1 is therefore computed over the classes present in that fold, with the seventeen-class value and the class coverage reported beside it, and accuracy — which does not depend on how many classes a scenario contains — is the primary quantity when folds are averaged. This convention is decision D21; the inventory that motivates it is documented in `DATASET_DETAILS.md` §4.1 and the resulting constraint in `LIMITATIONS.md` §1.9.
+
+**Secondary metric — Overall (micro) accuracy, on a single partition.** Reported for direct comparability with DARE and VT-UHGR, both of which report overall accuracy as their headline number. Always reported alongside macro F1, never alone.
 
 **Supporting metrics** (reported for every experiment, never used alone to select a checkpoint):
 - Per-class Precision and Recall
 - Per-class F1
 - **Minimum class accuracy** — retained explicitly because DARE reports this (92%) and it is the more safety-relevant number than any averaged metric.
 - Confusion matrix
-- Inference latency (ms/sample) — supports the "real-time viable" claim, not used for model selection.
+- Parameter count and total training time — the only cost indicators reported. Inference latency is out of scope: no measurement was taken under a protocol fixed before the models were frozen, so no speed, real-time, or deployment-cost claim is made (decision D19).
 
-**Tie-breaking metric.** If two checkpoints/configurations are within 0.5 macro-F1 points of each other, the tie is broken by **minimum class accuracy** (favoring the model that fails least badly on its worst class), not by overall accuracy. This is a deliberate, documented choice — overall accuracy can be misleadingly won by a model that is simply better on the majority class.
+**Checkpoint-selection tie window (0.005).** During training, the checkpoint saved as "best" at any epoch is the one with the highest macro F1 on the validation split. A candidate is treated as an improvement if its macro F1 exceeds the best value seen so far by more than 0.005; if it lands inside that window, it replaces the incumbent only when its minimum class accuracy is strictly higher. The window prevents a negligible macro-F1 fluctuation from discarding a checkpoint that is better on its worst class. It applies only to selection among epochs of one run, and it is a property of the selection rule, not a statement about model differences.
 
-**Best checkpoint selection criterion.** During training (Phase 6/7), the checkpoint saved as "best" at any epoch is the one with the **highest macro F1 on the validation split**, with minimum-class-accuracy as the tie-breaker per above. This selection **never** touches any test split — standard or LOSO (`standard_test.csv` or any `scenario_holdout_{i}_test.csv`) — in any phase, for any reason — see Phase 2/6/8 for the leakage-prevention mechanics enforcing this.
+**Noise band for comparing separately trained models (±0.020).** The 0.005 window is not a yardstick for comparing two models trained independently. Three configurations differing only in the stage-3 multiplier produced stage-2 epoch-mean validation macro F1 values of 0.7658, 0.7613, and 0.7465 — a range of approximately 0.019 — so training alone moves the result by about that much. A macro-F1 difference smaller than ±0.020 between two separately trained models is therefore reported as unresolved, in either direction, rather than as a win for the higher point estimate (decision D18). Per-class results are reported in full regardless of the aggregate outcome, and a reversal of the validation ordering on the test partition is recorded as a finding.
 
-**Reporting convention.** Every results table in `results/` must report macro F1 and overall accuracy together, minimum class accuracy alongside them, and — wherever the result derives from more than one run (LOSO folds, repeated seeds) — mean ± standard deviation rather than a single point estimate (see Statistical Analysis section below).
+**Best checkpoint selection criterion.** This selection **never** touches any test split — standard or LOSO (`standard_test.csv` or any `scenario_holdout_{i}_test.csv`) — in any phase, for any reason. See Phase 2/6/8 for the leakage-prevention mechanics enforcing this, and Appendix C item 6 for the check performed before any test result is trusted.
+
+**Reporting convention.** Every results table in `results/` must report macro F1 and overall accuracy together, minimum class accuracy alongside them, and — wherever the result derives from more than one run (LOSO folds, repeated seeds) — mean ± standard deviation rather than a single point estimate, with a t-distribution confidence interval given the small fold count (see Statistical Analysis below). LOSO tables carry one additional column: the class coverage of each fold, because a fold's seventeen-class macro-F1 ceiling equals its coverage. Each headline configuration was trained with a single seed (42, decision D13), so no repeated-seed variance exists: the only multi-run aggregate in the study is the eight-fold LOSO set, and comparisons between separately trained single-seed models use the ±0.020 band above rather than a repeated-seed standard deviation.
 
 ---
 
 ## Phase Index
 
-| Phase | Name | Depends On | Output |
-|---|---|---|---|
-| 0 | Bootstrap & Environment Setup | — | Reproducible dev environment |
-| 1 | Data Acquisition & Auditing | 0 | Raw CADDY verified on disk |
-| 2 | Data Pipeline, EDA & Preprocessing | 1 | Dataset understood, leakage-proof splits, `Dataset`/`DataLoader` |
-| 3 | Enhancement Module Integration | 2 | FUnIE-GAN/WaterNet wrapper + cached enhanced dataset |
-| 4 | Baseline Reproduction | 2 | Reproduced Yang et al. baseline (pipeline sanity check) |
-| 5 | SENSE Model Construction | 3, 4 | Full model, shape- and gradient-tested |
-| 6 | Training Infrastructure & Experiment Tracking | 5 | Trainer, loss, scheduler, checkpointing, full experiment logging |
-| 7 | Phase-Wise Model Training & Hyperparameter Strategy | 6 | Trained SENSE checkpoint (standard split) |
-| 8 | Evaluation Framework | 7 | Metrics suite bound to the Evaluation Strategy above |
-| 9 | Cross-Scenario Robustness Study (LOSO) | 8 | Leave-one-scenario-out benchmark + statistical analysis |
-| 10 | Ablation Studies | 7, 8, 9 | Enhancement / stereo-vs-mono / text-guidance ablations |
-| 11 | Comparative Analysis vs DARE & VT-UHGR | 8, 9, 10 | Final comparison tables/figures |
-| 12 | Publication Artifacts & Thesis Writeup Support | 11 | All figures/tables/notebooks inventoried and generated |
-| 13 | Reproducibility & Handover | 12 | Final README, frozen configs, archived checkpoints, reproducibility checklist |
+| Phase | Name | Depends On | Output | Status (25 Nov 2026) |
+|---|---|---|---|---|
+| 0 | Bootstrap & Environment Setup | — | Reproducible dev environment | Complete |
+| 1 | Data Acquisition & Auditing | 0 | Raw CADDY verified on disk | Complete |
+| 2 | Data Pipeline, EDA & Preprocessing | 1 | Dataset understood, leakage-proof splits, `Dataset`/`DataLoader` | Complete |
+| 3 | Enhancement Module Integration | 2 | FUnIE-GAN/WaterNet wrapper + cached enhanced dataset | Complete |
+| 4 | Baseline Reproduction | 2 | Single-image baseline on the shared protocol (E9) | Complete |
+| 5 | SENSE Model Construction | 3, 4 | Full model, shape- and gradient-tested | Complete |
+| 6 | Training Infrastructure & Experiment Tracking | 5 | Trainer, loss, scheduler, checkpointing, full experiment logging | Complete |
+| 7 | Phase-Wise Model Training & Hyperparameter Strategy | 6 | Trained SENSE checkpoint (standard split, epoch 45) | Complete |
+| 8 | Evaluation Framework | 7 | Metrics suite bound to the Evaluation Strategy above; single test read (E11) | Complete |
+| 9 | Cross-Scenario Generalisation Study (LOSO) | 8 | Leave-one-scenario-out evaluation + statistical analysis | Complete; result negative, reported as a limitation (D24) |
+| 10 | Ablation Studies | 7, 8, 9 | Enhancement / stereo-vs-mono / text-guidance ablations | Control at selected recipe complete (E12); four ablation arms not started |
+| 11 | Comparative Analysis vs DARE & VT-UHGR | 8, 9, 10 | Final comparison tables/figures | Not started |
+| 12 | Publication Artifacts & Thesis Writeup Support | 11 | All figures/tables/notebooks inventoried and generated | Not started |
+| 13 | Reproducibility & Handover | 12 | Final README, frozen configs, archived checkpoints, reproducibility checklist | Not started |
 
 ---
 
@@ -519,6 +546,8 @@ Phase 0 complete.
 - Deliverable: `scripts/verify_dataset.py`, console report.
 - Verification: Reported image count is consistent with the paper's stated ~9,191 positive + ~7,190 negative stereo pairs (small discrepancies are acceptable across dataset releases; flag anything off by more than a few percent). Scenario folder count is exactly 8.
 
+  > **Scope.** Only real captures are used. The release also distributes synthetic distortions of each capture; these are excluded, leaving 16,429 stereo pairs in the manifest (decision D2, `LIMITATIONS.md` §1.7). The study therefore makes no claim about robustness to controlled synthetic distortion.
+
 **P1.3 — Parse and validate CSV annotations**
 - Steps: Identify the canonical CSVs — the ones bundled inside the extracted complete-release archive — and load them with Pandas inside `scripts/verify_dataset.py`. If standalone CSVs were also downloaded separately and confirmed identical (per P1.1), they may be discarded; do not maintain two copies as sources of truth. Validate: no missing gesture labels, exactly 16 gesture classes (IDs 0–15) in the positives file + no-gesture in the negatives file, every filename referenced in either CSV actually exists on disk at its real extracted path, and the scenario field has exactly 8 unique values.
 - Deliverable: Validation report printed and saved to `data/processed/dataset_audit_report.txt`.
@@ -572,10 +601,14 @@ Phase 1 complete.
 - Deliverable: Three split manifest CSVs.
 - Verification: Per-class proportions differ by ≤2% across all three sets; zero `sample_id` overlap between any pair of the three sets (assert pairwise intersections are empty — this is the explicit anti-leakage check).
 
+  > **Outcome.** The manifest holds 16,429 real stereo pairs; the split is 11,499 training, 2,465 validation, and 2,465 test. Zero pairwise overlap was asserted, per-class proportions agree within the 2% tolerance, and all seventeen classes are present in all three partitions. These sizes are the reference figures against which every later table is checked.
+
 **P2.3 — Scenario-aware Leave-One-Scenario-Out (LOSO) splits with validation subset**
 - Steps: `make_scenario_splits(manifest, val_fraction=0.15)` producing 8 folds. Per fold `i`: the held-out scenario is the **test** set in full, touched only in Phase 8/9 evaluation. The pooled data from the remaining 7 scenarios is stratified-split into `train`/`val` (val_fraction of the pooled 7-scenario subset). Save `scenario_holdout_{i}_train.csv`, `scenario_holdout_{i}_val.csv`, `scenario_holdout_{i}_test.csv` for `i` in 1..8.
 - Deliverable: 24 CSV files (8 train/val/test triples).
 - Verification: Per fold, `test` contains only the held-out scenario; `train` ∪ `val` contains zero samples from it; `train` ∩ `val` is empty. All three checks asserted programmatically, not eyeballed.
+
+  > **Outcome.** The leakage audit passed all three invariants for all eight folds. Test partitions range from 157 to 6,107 pairs, and the gesture coverage of the eight folds is 17, 17, 15, 8, 10, 10, 10, and 17 classes. Five folds therefore cannot support a seventeen-class macro F1 without that value being bounded by coverage rather than by classification quality — the reason for the reporting convention in Phase 9 (decision D21). Every fold's training and validation partitions contain all seventeen classes, so checkpoint selection is comparable across folds. Per-fold sizes are tabulated in `METHODOLOGY.md`, Table 1.
 
 **P2.4 — `CaddyStereoDataset` (PyTorch `Dataset`)**
 - Steps: Returns `{"left": tensor, "right": tensor, "label": int, "scenario_id": int, "sample_id": str}`. Supports an `enhanced_dir` argument (wired fully in Phase 3) to swap raw images for cached enhanced ones.
@@ -647,23 +680,31 @@ Phase 1 complete.
 ## Phase 4 — Baseline Reproduction
 
 ### Objectives
-Reproduce a known literature result (Yang et al. transfer learning) on the exact Phase 2 pipeline, as a pipeline-correctness gate before any novel architecture is built on top of it.
+Establish a single-image baseline on the exact Phase 2 pipeline, as a pipeline-correctness gate before any novel architecture is built on top of it, and re-establish it under the shared training and selection protocol so that it is directly comparable with the proposed model.
 
 ### Tasks
 - P4.1 ► `SingleImageClassifier` (ResNet18 via `timm`, ImageNet-pretrained, 17-way head).
-- P4.2 — Minimal training loop, `configs/baseline_transfer_learning.yaml` (`training.loss.class_weighted: false` — see P6.1's note on preserving literature comparability), left-image only, standard split's **train** for fitting and **val** for monitoring (test untouched).
+- P4.2 — Minimal training loop, `configs/baseline_transfer_learning.yaml` (`training.loss.class_weighted: false` — see P6.1's note on preserving literature comparability), left-image only, standard split's **train** for fitting and **val** for monitoring (no test partition read).
 
-  > **Checkpoint note (Fix 5):** The Phase 4 baseline trained on raw 224×224 left-only images (its own config); resolution differs from SENSE (decided in P5.8 — listed as a limitation). The checkpoint (epoch 17) was selected by **validation accuracy** (97.04 %), because the Phase 4 training loop logged accuracy only, not macro F1. This is a documented deviation from the Evaluation Strategy; it is acceptable because Phase 4 is a pipeline-correctness gate, not the headline result.
-- P4.3 — Evaluate once on **test**, compare to literature (primarily Yang et al.'s ResNet figure 88.59%; GoogLeNet 90.08% is context only — published number, not reproduced), record in `data/processed/baseline_results.md`.
+  > **Superseded selection.** The first baseline run trained on raw 224×224 left-only images and selected its checkpoint by validation accuracy, because that loop logged accuracy only, not macro F1. That run served as the pipeline-correctness gate, but its checkpoint is **not** used for any reported comparison, because a checkpoint selected by a different criterion is not comparable with one selected by the project's rule.
+
+- P4.3 — **Baseline under the shared protocol (E9).** The baseline used in every comparison was trained with the same trainer, the same checkpoint-selection rule, and the same metric implementation as the proposed model: ResNet-18, left image only, 224 × 224, no enhancement, seventeen-way linear head, batch 32, 20 epochs, base learning rate \(1 \times 10^{-3}\), AdamW, cosine annealing to zero, unweighted cross-entropy, backbone frozen for five epochs then fully unfrozen at \(0.1 \times\) the base rate, early-stopping patience 20, seed 42. Checkpoint selection used validation macro F1 with the documented tie window; no test partition was read during training or selection.
+
+  > **Outcome.** The highest single-epoch validation macro F1 was 0.9448 at epoch 17, with minimum class accuracy 0.7083. Epoch 19 was inside the tie window at macro F1 0.9420 with minimum class accuracy 0.7917, and was therefore selected. Validation accuracy at the selected checkpoint was 0.9655. The run completed 20 epochs in 2,132 s.
+  >
+  > **Literature comparison.** The baseline is compared with Yang et al.'s ResNet figure of 88.59% `[TO BE VERIFIED: quoted from a secondary summary; the primary text has not been read in full]`. The GoogLeNet figure of 90.08% is context only and was not reproduced. Because the two studies use different split protocols and a different number of classes, the comparison is indicative and is not treated as a like-for-like reproduction.
+
 - P4.4 — Build and execute `notebooks/03_baseline_experiment_analysis.ipynb` (full contents in the Notebooks section below), consuming P4.2/P4.3's logged metrics and checkpoint: baseline training/validation loss & accuracy curves, checkpoint analysis, baseline performance summary table.
 
 ### Phase 4 Deliverables Checklist
-- [ ] `SingleImageClassifier` implemented
-- [ ] Baseline trained using train/val correctly, test touched only once at the end
-- [ ] Baseline evaluation report written and compared to literature
-- [ ] `notebooks/03_baseline_experiment_analysis.ipynb` executed with saved outputs
+- [x] `SingleImageClassifier` implemented
+- [x] Baseline trained using train/val correctly; no test partition read during training or selection
+- [x] Baseline retrained under the shared protocol (E9) and its checkpoint frozen for comparison
+- [x] Baseline test-partition evaluation performed once, jointly with the proposed model's, by one script on one partition (E11)
+- [x] Baseline evaluation report written and compared to literature, with the comparison's limits stated
+- [x] `notebooks/03_baseline_experiment_analysis.ipynb` executed with saved outputs
 
-**Phase 4 exit criterion (non-negotiable gate):** Baseline test accuracy is plausible (not near-random). If it is near-random, the data pipeline has a bug that must be fixed before Phase 5 begins.
+**Phase 4 exit criterion (non-negotiable gate):** Baseline accuracy is plausible (not near-random). **Met:** 0.9655 validation accuracy at the selected checkpoint. A near-random result would have indicated a pipeline defect to be fixed before Phase 5.
 
 ---
 
@@ -674,13 +715,13 @@ Reproduce a known literature result (Yang et al. transfer learning) on the exact
 **Depends on:** Phase 3 complete, and Phase 4's exit criterion met (baseline reproduction accuracy plausible — see Phase 4 exit criterion) — matches the Phase Index table above.
 
 ### Tasks
-- P5.1 `BiChannelEncoder` (EfficientNet-B4 ×2, `shared_weights` flag from the start).
+- P5.1 `BiChannelEncoder` (EfficientNet-B4 ×2, `shared_weights` flag from the start). Project default: shared weights (decision D6) — the two views depict the same scene from slightly different viewpoints, a shared encoder halves the visual-encoder parameter count, and the switch remains available for an unshared variant.
 - P5.2 `SelfAttentionBlock` (single-token + residual + LayerNorm formulation, explicitly justified in a docstring — this is a design decision, not an incidental implementation detail, and must be defensible in the thesis).
 - P5.3 `GestureTextEncoder` — implementation supports pluggable text-embedding backbones (Word2Vec / Sentence-BERT / BERT), selected entirely through `model.text_guidance.encoder_type` and `model.text_guidance.encoder_name` in the YAML config (see Appendix A) and never hardcoded in `src/models/text_encoder.py`; class names pulled from `DATASET_SCHEMA.md`, single source of truth; embeddings computed once and cached. `configs/sense_full.yaml` fixes the project default (`encoder_type: sentence_bert`, `encoder_name: all-MiniLM-L6-v2` — the same model already smoke-tested in P0.13), which is the configuration used for every headline SENSE result in this plan; this is a configuration default, not an open research variable, and Phase 10 does not introduce an encoder-comparison experiment.
 
   > **Fix 3 — Prompt construction:** Prompts come from `build_class_prompts(class_names, overrides)` (`src/models/text_encoder.py`): class names ordered by ID (0..16), underscores replaced by spaces, plus `model.text_guidance.class_prompt_overrides` (default: `true_neg: "no gesture"`). Raises `ValueError` if an override key is unknown, if any two prompts are identical, or if the prompt count ≠ 17. Verification: embeddings have shape (17, D); all rows distinct; `true_neg` row maps to "no gesture". Prompts are **fixed before SENSE training** and not tuned afterwards.
-- P5.4 `CrossModalFusion` (bidirectional cross-attention; gradient flow tested).
-- P5.5 `CosineSimilarityHead` (temperature scalar, fixed or learnable).
+- P5.4 `CrossModalFusion` (bidirectional cross-attention — visual→text and text→visual; gradient flow tested). Class-name embeddings are computed once by the pretrained sentence encoder and frozen, so a measured benefit can be attributed to fusion rather than to text-model adaptation (decision D7).
+- P5.5 `CosineSimilarityHead` (temperature scalar; the project default is learnable, log-parameterised, initialised at 0.07 and clamped to [0.01, 100] — decision D8).
 - P5.6 Full `SENSE` assembly, forward-tested on a real Phase 2/3 batch.
 - P5.7 Ablation-mode switches (`stereo.enabled`, `text_guidance.enabled`) built as config-driven branches inside the **same** model class — required for Phase 10's ablations to be fair, apples-to-apples comparisons rather than separately-coded models that could silently diverge in implementation details.
 - P5.8 Parameter count / VRAM budget check and image-size/batch-size selection (<7GB peak on RTX 4060). Runs on the fully assembled `SENSE` model (after P5.6 and P5.7).
@@ -767,9 +808,11 @@ already complete when Phase 8 starts.
 - Verification: Identical epoch-1 loss across two runs with the same seed.
 
 **P6.8 — Assemble the `Trainer` class**
-- Steps: Ties together dataloaders, model, loss, optimizer/scheduler, phase controller, checkpointing, `ExperimentTracker`, early stopping. `.fit(num_epochs)` trains on **train** and evaluates on **val** at the end of every epoch for early stopping and checkpoint selection — **never** on any test split. `.validate()` is usable standalone against any split passed to it, but its docstring explicitly states it must only be called against `val` during training/tuning; each run's designated test split is reserved exclusively for its own evaluation phase — the standard test split for Phase 8, and each fold's held-out scenario test split for Phase 9.
+- Steps: Ties together dataloaders, model, loss, optimizer/scheduler, phase controller, checkpointing (selection follows the 0.005 tie window defined in the Evaluation Strategy), `ExperimentTracker`, early stopping. `.fit(num_epochs)` trains on **train** and evaluates on **val** at the end of every epoch for early stopping and checkpoint selection — **never** on any test split. `.validate()` is usable standalone against any split passed to it, but its docstring explicitly states it must only be called against `val` during training/tuning; each run's designated test split is reserved exclusively for its own evaluation phase — the standard test split for Phase 8, and each fold's held-out scenario test split for Phase 9.
 - Deliverable: `src/training/trainer.py`.
 - Verification: `tests/test_training_step.py::test_trainer_single_epoch` — one epoch on a tiny subset completes, logs correctly, saves a checkpoint, loss finite.
+
+  > **Numerical hardening and divergence guard (decision D15).** The cosine-similarity head and both contrastive cross-entropy terms are computed in single precision regardless of the ambient mixed-precision mode. A run aborts when the training loss is non-finite for twenty consecutive steps, or when any validation loss is non-finite; a non-finite metric never overwrites a healthy `best.pth` or `last.pth`. This was adopted after two attempts at a base learning rate of \(1 \times 10^{-3}\) diverged, the first on a non-finite half-precision forward pass. The guard distinguishes legitimate loss-scaling skips from true divergence, and it is what allows a multi-hour run to fail loudly rather than silently.
 
 **P6.9 — `scripts/train.py` CLI**
 - Steps: `--config configs/{name}.yaml [--resume ...] [--experiment-name ...]`.
@@ -806,10 +849,14 @@ Phase 6 complete.
 - Deliverable: Finalized `configs/sense_full.yaml`.
 - Verification: Config loads; every referenced path exists.
 
+  > **Outcome (selected recipe).** The starting configuration was subsequently revised once, by the targeted study in P7.3, and the revised values are the ones now carried by `configs/sense_full.yaml` and inherited unchanged by every LOSO fold: base learning rate \(3 \times 10^{-4}\), stage-3 backbone multiplier \(0.3\), 50 epochs, batch 16, loss weights \(0.7/0.3\), cosine schedule with `t_max` 50 and `eta_min_ratio` 0.01, early-stopping patience 10 active from the first unfreeze, seed 42, `enhancement_method: funie_gan`, stereo and text guidance enabled, class-weighted cross-entropy. A base rate of \(1 \times 10^{-3}\) was tested first and abandoned as numerically unstable under the implemented mixed-precision regime; that negative result is recorded in the experiment log rather than omitted.
+
 **P7.2 — Run full training**
 - Steps: `python scripts/train.py --config configs/sense_full.yaml`. Confirm before starting that the val-split (not test-split) is wired into the epoch-end evaluation call — check the dataloader construction in the run config, not just assume it. Monitor via TensorBoard.
 - Deliverable: A complete experiment run under `runs/sense_full/{timestamp}/` (per P6.5), including `checkpoints/best.pth`.
 - Verification: Training completes all 50 epochs or triggers early stopping sensibly (not prematurely); validation macro F1 trend is visibly improving in TensorBoard/`metrics.csv`.
+
+  > **Outcome.** The final run of the selected configuration (`runs/sense_full_lr3e-4_p3lr0.3/20261119T120231Z/`) completed all 50 epochs in 11,640 s with no early stop and no numerical-guard firings. Validation macro F1 rose from 0.5768 (stage-1 mean) through 0.7827 (stage-2 mean) to 0.9348 (stage-3 mean), with the largest single gain, 0.0652, at the epoch-30 unfreeze transition.
 
 **P7.3 — Targeted sanity sweep (not exhaustive search)**
 - Objective: If P7.2's validation performance clearly underperforms expectation, run a small, deliberate, fully-documented set of alternative configurations — never a grid search.
@@ -827,25 +874,29 @@ Phase 6 complete.
 - Deliverable: `data/processed/hparam_sweep_notes.md`, `results/hparam_sweep/comparison_plot.png`, `results/hparam_sweep/summary_table.csv`.
 - Verification: Every variation has a distinct experiment-tracking directory (per P6.5) and a written justification; the final chosen configuration is explicitly named and justified in writing, never selected by "whichever ran last."
 
+  > **Outcome.** The sweep was performed, not skipped, and stayed within the "at most 3–4 variations, one axis at a time" rule. Four full-model configurations were trained: \(1 \times 10^{-4}\) with stage-3 multiplier 0.01; \(3 \times 10^{-4}\) with 0.01; \(3 \times 10^{-4}\) with 0.1; and \(3 \times 10^{-4}\) with 0.3. Best validation macro F1 was 0.8766, 0.8946, 0.9296, and 0.9564 respectively. The last was selected. Its margin over the next-best configuration, 0.0267, exceeds both the 0.005 selection window and the estimated single-seed spread of approximately 0.019, so the ranking is treated as meaningful subject to the single-seed limitation. A separate attempt at a base rate of \(1 \times 10^{-3}\) diverged twice and was abandoned; the base rate was therefore not varied further.
+
 **P7.4 — Select and freeze the final standard-split checkpoint**
 - Steps: Based on P7.2 (or P7.3 if a sweep was needed), select the checkpoint with the best validation macro F1 (min-class accuracy as tie-breaker, per the Evaluation Strategy). Copy to `checkpoints/sense_final_standard_split.pth`.
 - Deliverable: `checkpoints/sense_final_standard_split.pth`, an entry in `data/processed/final_checkpoint_manifest.md` recording its validation metrics and the exact experiment-run directory it came from.
 - Verification: File loads correctly; manifest entry is fully traceable to a specific `runs/.../` directory.
 
+  > **Outcome.** Epoch 45 was retained: validation macro F1 0.9564, accuracy 0.9659, minimum class accuracy 0.9143 (binding class `four`, 32 of 35 correct). The source run is `runs/sense_full_lr3e-4_p3lr0.3/20261119T120231Z/`; the manifest records its SHA-256, size, git commit at launch, seed, wall time, and the full provenance chain. The model holds 33.57 million unique parameters; an earlier record of 52.29 million counted the stored state dictionary, in which the shared visual encoder appears twice.
+
 **P7.5 — Hyperparameter analysis notebook**
 - Objective: Turn P7.3's sweep records into a reviewable, visual comparison.
-- Steps: Build and execute `notebooks/05_hyperparameter_analysis.ipynb` (full contents in the Notebooks section below), consuming `data/processed/hparam_sweep_notes.md`, `results/hparam_sweep/comparison_plot.png`, and `results/hparam_sweep/summary_table.csv` produced in P7.3 — learning-rate/batch-size/loss-weight comparison plots, early-stopping behavior analysis, best-configuration summary table. If P7.3 was skipped because P7.2 met expectations on the first run, the notebook instead documents the single baseline configuration and states explicitly that no sweep was needed.
+- Steps: Build and execute `notebooks/05_hyperparameter_analysis.ipynb` (full contents in the Notebooks section below), consuming `data/processed/hparam_sweep_notes.md`, `results/hparam_sweep/comparison_plot.png`, and `results/hparam_sweep/summary_table.csv` produced in P7.3 — learning-rate/batch-size/loss-weight comparison plots, early-stopping behavior analysis, best-configuration summary table.
 - Deliverable: Executed `notebooks/05_hyperparameter_analysis.ipynb`.
-- Verification: Notebook runs end-to-end from already-generated P7.3 outputs (or documents their absence per the note above); no training/evaluation logic duplicated inside the notebook.
+- Verification: Notebook runs end-to-end from already-generated P7.3 outputs; no training/evaluation logic duplicated inside the notebook.
 
 ### Phase 7 Deliverables Checklist
-- [x] Baseline configuration finalized and justified
+- [x] Baseline configuration finalized and justified, then revised once by the documented study
 - [x] Full training run completed on standard split, val-only monitoring confirmed
-- [x] Sanity sweep (if performed) documented per the five required fields for every variation
+- [x] Sanity sweep documented per the five required fields for every variation
 - [x] Final checkpoint selected per the Evaluation Strategy's stated criterion and frozen
 - [x] `notebooks/05_hyperparameter_analysis.ipynb` executed with saved outputs
 
-**Phase 7 exit criterion:** A trained, checkpointed SENSE model exists with fully documented, traceable validation performance and a written justification for every configuration decision made.
+**Phase 7 exit criterion:** A trained, checkpointed SENSE model exists with fully documented, traceable validation performance and a written justification for every configuration decision made. **Met.**
 
 ---
 
@@ -871,37 +922,43 @@ Phase 7 complete.
 - Deliverable: `src/evaluation/metrics.py`.
 - Verification: `tests/test_metrics.py` — hand-computed synthetic examples match function outputs exactly.
 
+  > **Scope note.** The inference-time helper is implemented and unit-tested, but it is **not** called by any reported evaluation: no latency measurement was taken under a protocol fixed before the models were frozen, so no speed or real-time claim is made (decision D19). It is retained for completeness and must not be used to support a claim until a protocol is stated in advance.
+
 **P8.2 — Standard evaluation script**
 - Steps: `scripts/evaluate.py --checkpoint {path} --split {test_csv} --output {report_dir}`. Runs eval mode over the specified split, computes all P8.1 metrics, saves JSON + confusion matrix PNG + Markdown summary.
 - Note: `{test_csv}` here must always resolve to a designated test split — `standard_test.csv`, the relevant `scenario_holdout_{i}_test.csv`, or (per the Phase 10 methodology note) a scenario-grouped subset of `standard_test.csv` — never a `_val.csv` file. This same script is reused in Phase 9 (LOSO) and Phase 10 (ablations); Phase 8 is the **first** point in the project at which any test split is touched.
 - Deliverable: `scripts/evaluate.py`.
 - Verification: Running on `checkpoints/sense_final_standard_split.pth` against `standard_test.csv` produces a complete report, all metrics populated, no `null`/`NaN` fields.
 
+  > **Implemented options.** The script accepts `--checkpoint`, `--split`, `--output`, and `--partition-label`, the last supplying the human-readable name of the partition used in report text and figure titles (default: `standard test partition`). The same entry point produced the standard test results (E11), the control's test results (E12), and will produce each LOSO fold's result, so all reported test numbers come from one code path.
+
 **P8.3 — Run Experiment 1 (standard evaluation) and record headline numbers**
 - Steps: Execute P8.2 against `checkpoints/sense_final_standard_split.pth`. Save to `results/experiment_1_standard/`.
 - Deliverable: `results/experiment_1_standard/report.md`, `confusion_matrix.png`, `metrics.json`.
 - Verification: Overall accuracy, macro F1, and min-class accuracy are all recorded, directly comparable in format to DARE/VT-UHGR's published numbers.
 
+  > **Outcome (E11).** Both frozen models were evaluated in a single deterministic pass each over the 2,465-pair standard test partition, by one script and one metric implementation, after neither checkpoint was trained, re-selected, or modified. Full model: accuracy 0.9566, macro F1 0.9398, minimum class accuracy 0.8571. Baseline: accuracy 0.9558, macro F1 0.9329, minimum class accuracy 0.7143. The full model is ahead by 0.0008 accuracy, 0.0069 macro F1, and 0.1429 minimum class accuracy; the macro-F1 difference lies inside the ±0.020 band used for model comparison, so it is reported as unresolved, while the minimum-class advantage is reported as the substantive difference. Integrity was checked before the values were accepted: each confusion matrix sums to 2,465, its diagonal reproduces the reported accuracy exactly, the per-class supports sum to 2,465, and all seventeen classes are present. This was the first and only access to the standard test partition by either arm.
+
 **P8.4 — Final evaluation notebook (Experiment 1 portion)**
 - Objective: Give the standard-split evaluation visuals a concrete owner; this notebook is extended again in Phase 11 (P11.4) once the full comparison exists.
-- Steps: Build and execute `notebooks/06_final_evaluation.ipynb` (full contents in the Notebooks section below), consuming `results/experiment_1_standard/metrics.json` and `confusion_matrix.png` from P8.3 — confusion matrix, classification report, precision/recall/macro-F1, per-class performance.
-- Deliverable: Executed `notebooks/06_final_evaluation.ipynb` (Experiment 1 sections populated).
+- Steps: Build and execute `notebooks/07_final_evaluation.ipynb` (full contents in the Notebooks section below), consuming `results/experiment_1_standard/metrics.json` and `confusion_matrix.png` from P8.3 — confusion matrix, classification report, precision/recall/macro-F1, per-class performance.
+- Deliverable: Executed `notebooks/07_final_evaluation.ipynb` (Experiment 1 sections populated).
 - Verification: Notebook runs end-to-end from P8.3's already-generated outputs; no evaluation logic duplicated inside the notebook.
 
 ### Phase 8 Deliverables Checklist
 - [x] `metrics.py` implemented and unit-tested against hand-computed examples
-- [ ] `evaluate.py` generic across any checkpoint/split, test-split-only enforced by convention/note
-- [ ] Experiment 1 evaluation completed and recorded
-- [ ] `notebooks/06_final_evaluation.ipynb` created and executed (Experiment 1 portion)
+- [x] `evaluate.py` generic across any checkpoint/split, test-split-only enforced by convention/note
+- [x] Experiment 1 evaluation completed and recorded (E11, both arms)
+- [x] `notebooks/07_final_evaluation.ipynb` created and executed (Experiment 1 portion)
 
-**Phase 8 exit criterion:** `results/experiment_1_standard/` contains a complete, correct metrics report, directly comparable to published baselines, and this is the first point in the project at which a test split — specifically, the standard test split — has been accessed.
+**Phase 8 exit criterion:** `results/experiment_1_standard/` contains a complete, correct metrics report, directly comparable to published baselines, and this is the first point in the project at which a test split — specifically, the standard test split — has been accessed. **Met:** the report exists for both arms and the integrity checks listed under P8.3 passed before the values were accepted.
 
 ---
 
-## Phase 9 — Cross-Scenario Robustness Study (Experiment 2) & Statistical Analysis
+## Phase 9 — Cross-Scenario Generalisation Study (Experiment 2) & Statistical Analysis
 
 ### Objectives
-Execute the thesis's primary novelty claim — systematic Leave-One-Scenario-Out (LOSO) robustness evaluation — and back it with proper statistical treatment across folds, testing **H1** directly.
+Execute the study's central cross-scenario contribution — systematic Leave-One-Scenario-Out (LOSO) evaluation — and back it with proper statistical treatment across folds, testing **H1** directly.
 
 ### Depends on
 Phase 8 complete; Phase 2.3 (LOSO splits).
@@ -909,44 +966,50 @@ Phase 8 complete; Phase 2.3 (LOSO splits).
 ### Tasks
 
 **P9.1 — Train 8 scenario-holdout models**
-- Steps: For `i` in 1..8, train a fresh SENSE model using `scenario_holdout_{i}_train.csv` for training and `scenario_holdout_{i}_val.csv` for epoch-wise validation/early stopping, using the exact same `configs/sense_full.yaml` hyperparameters (only the data split differs — everything else held constant for fair comparison). This is **8 separate full training runs** — budget compute time accordingly; consider reducing epoch count slightly (e.g., 30 instead of 50) if compute time is a binding constraint, but document this deviation explicitly if made.
-- Deliverable: `checkpoints/scenario_holdout_{1..8}_best.pth`, each with its own full P6.5 experiment-tracking directory.
-- Verification: All 8 checkpoints exist and load correctly; all 8 have complete, traceable experiment records.
+- Steps: For `i` in 1..8, train a fresh SENSE model using `scenario_holdout_{i}_train.csv` for training and `scenario_holdout_{i}_val.csv` for epoch-wise validation and early stopping, using the selected recipe from Phase 7 unchanged. The eight fold configs (`configs/loso_fold_{1..8}.yaml`) were verified programmatically to merge to 49 keys each, differing from `configs/sense_full.yaml` in exactly three: the training, validation, and test partition paths. This is **8 separate full training runs**, each on the full 50-epoch schedule; the epoch count is **not** reduced, so that fold differences are attributable to the held-out scenario alone. Estimated total training time is 27.5 h on the reference GPU, scaled from the selected run's measured 11,640 s per 50 epochs at 11,499 training pairs.
+- Deliverable: eight complete experiment-tracking directories, `runs/loso_fold_{i}/{timestamp}/`, each containing `checkpoints/best.pth`, `checkpoints/last.pth`, and the full P6.5 record.
+- Verification: All eight checkpoints exist and load correctly; each run's `config.yaml` records that fold's three split paths; and every fold's training and validation partitions contain all seventeen classes, so checkpoint selection compares like with like in every fold.
+
+  > **Artefact location.** The earlier draft of this task named the deliverable `checkpoints/scenario_holdout_{i}_best.pth`. That is the archival name used in Phase 13; the live artefact is the run directory's `checkpoints/best.pth`, which the evaluation driver discovers directly. Nothing is copied or moved while training.
+  >
+  > **Baseline not included (decision D16).** The single-image baseline is **not** retrained under LOSO. The standard-split comparison did not produce a tie that cross-scenario evidence would resolve, and eight further runs would add cost without answering a stated question. No claim is therefore made about the baseline's cross-scenario robustness, and the Phase 11 comparison table marks the baseline's cross-scenario column as "no". If the standard-split comparison later proves ambiguous, or an examiner requires a like-for-like cross-scenario comparison, the study must be run before such a claim is made.
 
 **P9.2 — Evaluate each holdout model on its held-out scenario**
-- Steps: Run `scripts/evaluate.py` for each checkpoint against its corresponding held-out `scenario_holdout_{i}_test.csv`. Aggregate via `src/evaluation/cross_scenario.py` into one table: scenario ID → accuracy, macro F1, min-class accuracy.
+- Steps: `scripts/run_cross_scenario.py` drives the eight evaluations. For each fold it locates the fold's `checkpoints/best.pth`, calls the same `scripts/evaluate.py` entry point that produced the standard test results (E11) against that fold's `scenario_holdout_{i}_test.csv`, and aggregates the results through `src/evaluation/cross_scenario.py`. `--folds` restricts the run to named folds; `--skip-existing` reuses a fold's report when one already exists, so each fold's test partition is read once and is not re-read on a later invocation; a fold with no checkpoint is reported as missing rather than silently omitted.
 - Deliverable: `results/experiment_2_cross_scenario/per_scenario_results.csv`.
-- Verification: All 8 rows populated.
+- Verification: All 8 rows populated. Each row records overall accuracy, macro F1 over the classes present in that fold, the seventeen-class macro F1, minimum class accuracy, and the class coverage (`present/17`).
 
 **P9.3 — Statistical analysis across LOSO folds (new, research-grade addition)**
 - Objective: Report LOSO results as a statistically defensible summary, not eight disconnected numbers.
 - Steps:
-  1. Compute **mean ± standard deviation** across the 8 folds for overall accuracy, macro F1, and min-class accuracy.
-  2. Compute a **95% confidence interval** for the mean accuracy and mean macro F1 across folds (using the t-distribution given the small fold count, `scipy.stats.t.interval`).
-  3. For Phase 10's standard-split, per-scenario comparisons (SENSE-full vs. each ablation arm — both trained on the standard split and evaluated on scenario-grouped subsets of `standard_test.csv`, per the Phase 10 methodology note; this is a different protocol from the LOSO folds described in this task and must not be presented as a LOSO comparison), run a **paired statistical test** (paired t-test or Wilcoxon signed-rank test, whichever is appropriate given the sample size and normality — check with a Shapiro-Wilk test first and justify the choice in writing) across the 8 scenario groups, rather than comparing only mean values.
-  4. Document exactly when each of these analyses is performed: mean±SD and CI (for Phase 9's true LOSO folds) are computed immediately after P9.2; the paired test over Phase 10's 8 scenario groups is computed once the corresponding ablation variant's standard-split, per-scenario results exist (cross-referenced in Phase 10).
-- Deliverable: `results/experiment_2_cross_scenario/statistical_summary.md` containing mean±SD, CI, and (once available) paired-test results and p-values with the test choice justified.
+  1. Compute **mean ± standard deviation** across the 8 folds for overall accuracy, present-class macro F1, and minimum class accuracy. Overall accuracy is the primary cross-fold quantity, because it does not depend on how many classes a fold contains (decision D21).
+  2. Compute a **95% confidence interval** for the mean accuracy and mean present-class macro F1 across folds (using the t-distribution given the small fold count, `scipy.stats.t.interval`).
+  3. Report the seventeen-class macro F1 and the class coverage beside the present-class value in every fold-level table. The seventeen-class value is **not** averaged as the headline, because a fold's ceiling on it equals its coverage: 1.0000 for the three complete scenarios, 0.8824 for the fifteen-class scenario, 0.5882 for the three ten-class scenarios, and 0.4706 for the eight-class scenario. Averaging it would describe the recording inventories rather than model transfer.
+  4. For Phase 10's standard-split, per-scenario comparisons (SENSE-full vs. each ablation arm — both trained on the standard split and evaluated on scenario-grouped subsets of `standard_test.csv`, per the Phase 10 methodology note; a different protocol from the LOSO folds and not to be presented as a LOSO comparison), run a **paired statistical test** (paired t-test or Wilcoxon signed-rank test, whichever is appropriate given the sample size and normality — check with a Shapiro-Wilk test first and justify the choice in writing) across the 8 scenario groups. This step is **pending** until those arms exist.
+  5. Document exactly when each analysis is performed: mean±SD and CI (for the true LOSO folds) immediately after P9.2; the paired test over Phase 10's scenario groups once the corresponding arm's standard-split, per-scenario results exist.
+- Deliverable: `results/experiment_2_cross_scenario/statistical_summary.md` containing mean±SD, CI, per-fold coverage, and (once available) paired-test results and p-values with the test choice justified.
 - Verification: Every reported LOSO number in the thesis traces back to this file, never to a single fold's result presented in isolation.
 
 **P9.4 — Analyze and visualize scenario difficulty ranking**
-- Steps: Bar chart of accuracy by scenario, sorted descending, with error bars if repeated-seed variance is available. Cross-reference `DATASET_SCHEMA.md` scenario descriptions to identify which physical conditions (turbidity, low light, etc.) correlate with lower accuracy.
+- Steps: Bar chart of accuracy by scenario, sorted descending, annotated with each scenario's gesture inventory and test-partition size. Interpret the ranking from measured performance and, where a physical explanation is offered, state that the scenario's water conditions are unverified and mark the explanation as a conjecture.
 - Deliverable: `results/experiment_2_cross_scenario/scenario_difficulty_analysis.md` + figure.
-- Verification: Explicitly names the hardest scenarios and interprets them physically — this is the evidentiary basis for accepting or rejecting **H1**.
+- Verification: Explicitly names the highest- and lowest-accuracy scenarios, states their inventories and sample sizes beside their accuracies, and gives an explicit H1 verdict based on the measured spread. A physical attribution to turbidity or low light is not asserted as established unless the scenario description has been verified.
 
 **P9.5 — Robustness analysis notebook**
 - Objective: Give the LOSO robustness visuals a concrete owner.
-- Steps: Build and execute `notebooks/07_robustness_analysis.ipynb` (full contents in the Notebooks section below), consuming `results/experiment_2_cross_scenario/per_scenario_results.csv`, `statistical_summary.md`, and `scenario_difficulty_analysis.md` from P9.2–P9.4 — scenario-wise and fold-wise performance, mean±SD/CI visualization, robustness discussion, failure-case analysis.
-- Deliverable: Executed `notebooks/07_robustness_analysis.ipynb`.
+- Steps: Build and execute `notebooks/08_robustness_analysis.ipynb` (full contents in the Notebooks section below), consuming `results/experiment_2_cross_scenario/per_scenario_results.csv`, `statistical_summary.md`, and `scenario_difficulty_analysis.md` from P9.2–P9.4 — scenario-wise and fold-wise performance, coverage-annotated macro F1, mean±SD/CI visualization, robustness discussion, failure-case analysis.
+- Deliverable: Executed `notebooks/08_robustness_analysis.ipynb`.
 - Verification: Notebook runs end-to-end from already-generated P9.2–P9.4 outputs; no LOSO training/evaluation logic duplicated inside the notebook.
 
 ### Phase 9 Deliverables Checklist
+- [x] Evaluation harness implemented and validated without reading any test data: fold discovery, subprocess wiring, partial-fold handling, and D21 aggregation checked on synthetic artefacts
 - [ ] 8 LOSO models trained, each fully tracked
-- [ ] Per-scenario results aggregated
+- [ ] Per-scenario results aggregated, with coverage and the seventeen-class value beside the present-class macro F1
 - [ ] Statistical summary (mean±SD, CI) computed and documented
-- [ ] Scenario difficulty analysis written with physical interpretation, explicit H1 verdict
-- [ ] `notebooks/07_robustness_analysis.ipynb` executed with saved outputs
+- [ ] Scenario difficulty analysis written with inventories stated, explicit H1 verdict
+- [ ] `notebooks/08_robustness_analysis.ipynb` executed with saved outputs
 
-**Phase 9 exit criterion:** A complete, statistically-summarized 8-fold LOSO result exists with an explicit accept/reject verdict on H1 — this is the evidentiary backbone for Claim 3 (cross-scenario benchmark).
+**Phase 9 exit criterion:** A complete, statistically-summarized 8-fold LOSO result exists with an explicit accept/reject verdict on H1 — this is the evidentiary backbone for Claim 3 (cross-scenario benchmark). No individual fold's result is reportable in isolation, and no fold result is reportable until all eight exist.
 
 ---
 
@@ -978,27 +1041,31 @@ Phase 7 (supplies the `sense_full` checkpoint reused as the `funie_gan` arm), Ph
 - Verification: Explicit accept/reject verdict on H4. A null or partial result is a legitimate, reportable finding — report it honestly rather than reframing it as support it doesn't have. State explicitly in the report that this reflects standard-split, per-scenario performance, not LOSO robustness.
 
 **P10.4 — Consolidate all ablation results**
-- Steps: `results/ablation_master_summary.md` combining Experiments 3–5 and P10.6's overall accuracy, macro F1, min-class accuracy deltas, hypothesis verdicts (H2, H3, H4), and the backbone-matched control's Claim 1 attribution, ready for the thesis results chapter. Explicitly list all **five** new ablation checkpoints trained in this phase — `checkpoints/ablation_enhancement_none.pth`, `checkpoints/ablation_enhancement_waternet.pth`, `checkpoints/ablation_stereo_mono.pth`, `checkpoints/ablation_text_guidance_none.pth`, `checkpoints/ablation_neither.pth` — alongside the reused `checkpoints/sense_final_standard_split.pth` (the `funie_gan`/full-model arm from Phase 7).
+- Steps: `results/ablation_master_summary.md` combining Experiments 3–5 and P10.6's overall accuracy, macro F1, min-class accuracy deltas, hypothesis verdicts (H2, H3, H4), and the backbone-matched control's Claim 1 attribution, ready for the thesis results chapter. Explicitly list all **five** ablation checkpoints — `checkpoints/ablation_enhancement_none.pth`, `checkpoints/ablation_enhancement_waternet.pth`, `checkpoints/ablation_stereo_mono.pth`, `checkpoints/ablation_text_guidance_none.pth`, `checkpoints/ablation_neither.pth` — alongside the reused `checkpoints/sense_final_standard_split.pth` (the `funie_gan`/full-model arm from Phase 7). Four of the five are trained in this phase; the fifth, the backbone-matched control, has already been trained and evaluated as E12 and only needs its checkpoint copied to the consolidated name.
 - Deliverable: `results/ablation_master_summary.md`.
-- Verification: Every ablation arm (all five newly trained checkpoints, plus the reused full-model checkpoint) has full metrics recorded; every hypothesis (H2, H3, H4) has an explicit, evidence-backed verdict; the `ablation_neither.pth` arm is listed with its Claim 1 attribution role (no hypothesis verdict).
+- Verification: Every ablation arm (all five checkpoints, plus the reused full-model checkpoint) has full metrics recorded; every hypothesis (H2, H3, H4) has an explicit, evidence-backed verdict; the `ablation_neither.pth` arm is listed with its Claim 1 attribution role (no hypothesis verdict).
 
-**P10.5 — Ablation study notebook**
-- Steps: Build and execute `notebooks/04_ablation_study.ipynb` (full contents in the Notebooks section below), consuming `results/experiment_3_enhancement/comparison_table.csv`, `results/experiment_4_stereo/comparison_table.csv` + `per_class_gap_analysis.md`, `results/experiment_5_text_guidance/comparison_table.csv`, `results/experiment_6_backbone_control/comparison_table.csv`, and `results/ablation_master_summary.md` from P10.1–P10.4 and P10.6 — enhancement/stereo/text-guidance ablation comparisons, backbone-matched control, full-model comparison, H2/H3/H4 verdict visualization.
-- Deliverable: Executed `notebooks/04_ablation_study.ipynb`.
-- Verification: Notebook runs end-to-end from already-generated P10.1–P10.4 and P10.6 outputs; no ablation training/evaluation logic duplicated inside the notebook.
+**P10.5 — Control and ablation notebook**
+- Steps: Build and execute `notebooks/04_control_experiment_analysis.ipynb` (full contents in the Notebooks section below). The control sections consume `results/experiment_1_standard/` (E11, E12) and are already populated; the ablation sections are appended once `results/experiment_3_enhancement/comparison_table.csv`, `results/experiment_4_stereo/comparison_table.csv` + `per_class_gap_analysis.md`, `results/experiment_5_text_guidance/comparison_table.csv`, `results/experiment_6_backbone_control/comparison_table.csv`, and `results/ablation_master_summary.md` exist — enhancement/stereo/text-guidance ablation comparisons, backbone-matched control, full-model comparison, H2/H3/H4 verdict visualization.
+- Deliverable: Executed `notebooks/04_control_experiment_analysis.ipynb`.
+- Verification: Notebook runs end-to-end from already-generated outputs; no ablation training/evaluation logic duplicated inside the notebook.
 
 **P10.6 — Backbone-matched control (supports Claim 1)**
-- Steps: Train `configs/sense_neither.yaml` on the standard split with the Phase 7 schedule (EfficientNet-B4, single image, no enhancement, no text guidance). Evaluate on the standard test split with the same protocol as the other arms (macro F1, accuracy, min-class accuracy). Produce a standard-split per-scenario breakdown by grouping `standard_test.csv` samples by `scenario_id` (consistent with the Phase 10 methodology note; not a LOSO evaluation).
-- Deliverable: `checkpoints/ablation_neither.pth`, `results/experiment_6_backbone_control/comparison_table.csv`.
-- Verification: Macro F1, accuracy, and min-class accuracy recorded. The report states explicitly that this arm isolates backbone and training-recipe effects from SENSE's three contributions (enhancement, stereo fusion, text guidance), and that the ResNet18 baseline → SENSE-neither → full SENSE progression attributes the total gain to its sources. No hypothesis verdict — this arm supports Claim 1 only.
+- Steps: The primary control is the backbone-matched control trained at the **selected recipe**: the same backbone, schedule, stage boundaries, stage multipliers, loss weights, class weighting, and seed as the selected configuration, with stereo input, text guidance, and input enhancement disabled. A programmatic comparison of the two merged configurations shows 49 keys in each, of which exactly three differ — the stereo switch, the text-guidance switch, and the enhancement method — so the control isolates the modules at the recipe that was actually selected (decision D20). It is evaluated on the standard test partition with the same script and protocol as the other arms.
+- Deliverable: the control's run directory `runs/control_selected_recipe/<timestamp>/`, its report under `results/experiment_1_standard/control/`, and `results/experiment_6_backbone_control/comparison_table.csv`. The consolidated checkpoint copy `checkpoints/ablation_neither.pth` is made when the remaining arms are consolidated in P10.4.
+- Verification: Macro F1, accuracy, and min-class accuracy recorded. The report states explicitly that this arm isolates backbone and training-recipe effects from SENSE's three contributions, and that the single-image baseline → SENSE-neither → full SENSE progression attributes the total gain to its sources. No hypothesis verdict — this arm supports Claim 1 only.
+
+  > **Outcome (E12).** The run completed all 50 epochs in 10,697 s. The selection rule retained epoch 44 at validation macro F1 0.9469, accuracy 0.9570, minimum class accuracy 0.8571; the highest macro F1 in the run, 0.9491 at epoch 49, was rejected because its minimum class accuracy, 0.8333, was below the value already held. On the standard test partition the control attains accuracy 0.9465, macro F1 0.9297, minimum class accuracy 0.8286. The selected configuration is ahead by 0.0101 accuracy, 0.0102 macro F1, and 0.0286 minimum class accuracy; the macro-F1 difference lies inside the ±0.020 band and is reported as unresolved. The control's binding class for minimum class accuracy is `four`, not `five`, which is the binding class for the other two arms.
+  >
+  > **Earlier control (E8).** The control trained under the reference recipe reached validation macro F1 0.8287. At that recipe the three modules are associated with 0.0479 validation macro F1; at the selected recipe, 0.0095. Most of the earlier difference therefore belongs to the optimisation settings rather than to the modules. E8 is retained as evidence about the sensitivity of the result to the recipe and no longer serves as the primary control.
 
 ### Phase 10 Deliverables Checklist
 - [ ] Enhancement ablation trained/evaluated (2 checkpoints: `none`, `waternet`), H2 verdict recorded, explicitly labeled as standard-split per-scenario analysis (not LOSO)
 - [ ] Stereo vs. mono ablation trained/evaluated with per-class breakdown, H3 verdict recorded
 - [ ] Text guidance ablation trained/evaluated with widening-gap analysis, H4 verdict recorded, explicitly labeled as standard-split per-scenario analysis (not LOSO)
-- [ ] Backbone-matched control trained/evaluated (`sense_neither.yaml`), Claim 1 attribution documented
+- [x] Backbone-matched control trained/evaluated at the selected recipe (E12), Claim 1 attribution documented
 - [ ] Master ablation summary produced, all five new ablation checkpoints listed
-- [ ] `notebooks/04_ablation_study.ipynb` executed with saved outputs
+- [ ] `notebooks/04_control_experiment_analysis.ipynb` finalized with the ablation sections
 
 **Phase 10 exit criterion:** H2, H3, and H4 each have an explicit, statistically-supported verdict, positive or negative, fully documented.
 
@@ -1015,30 +1082,30 @@ Phase 8, 9, 10 complete.
 ### Tasks
 
 **P11.1 — Final comparison table**
-- Steps: Rows: Yang et al. baseline — ResNet18 (Phase 4; re-run through Phase 6 Trainer with macro-F1 checkpoint selection before final reporting), SENSE-neither (EfficientNet-B4, single image, no text, no enhancement; Phase 10 P10.6), DARE (literature), VT-UHGR (literature), SENSE (Phase 7/8 standard-split result, plus the LOSO mean±SD from Phase 9). Columns: overall accuracy, macro F1, min-class accuracy, enhancement used, stereo used, text guidance used, cross-scenario tested (yes/no).
+- Steps: Rows: single-image baseline — ResNet-18, left image only (Phase 4, E9, already retrained through the shared trainer with macro-F1 checkpoint selection and evaluated under E11 — no further re-run is required), backbone-matched control — EfficientNet-B4, single image, no text, no enhancement, at the selected recipe (Phase 10, E12), DARE (literature), VT-UHGR (literature), and SENSE (Phase 7/8 standard-split result from E11, plus the LOSO mean ± SD and per-fold coverage from Phase 9). Columns: overall accuracy, macro F1, minimum class accuracy, enhancement used, stereo used, text guidance used, cross-scenario tested (yes/no). Two presentation rules apply: a macro-F1 difference smaller than ±0.020 between separately trained models is shown as unresolved rather than as a ranking (D18), and any LOSO row carries its class coverage, because the seventeen-class macro-F1 ceiling of a fold equals that coverage (D21).
 - Deliverable: `results/final_comparison_table.md`.
-- Verification: Every SENSE-side number traces to a specific results file from Phases 4/8/9/10 — cited by path, never hand-typed from memory.
+- Verification: Every SENSE-side number traces to a specific results file from Phases 4/8/9/10 — cited by path, never hand-typed from memory. Literature rows are marked as literature and are not presented as like-for-like reproductions.
 
 **P11.2 — Headline figures**
-- Steps: (a) bar chart: SENSE vs. DARE vs. VT-UHGR vs. baseline, overall + macro F1 + min-class accuracy; (b) per-scenario robustness chart (Phase 9) with error bars from the statistical summary; (c) ablation summary chart (Phase 10) with H2/H3/H4 verdicts annotated. The ResNet18 baseline → SENSE-neither → full SENSE progression is included in the ablation chart to attribute the total gain between backbone/recipe effects and SENSE's three contributions.
+- Steps: (a) bar chart: SENSE vs. DARE vs. VT-UHGR vs. baseline, overall + macro F1 + min-class accuracy; (b) per-scenario robustness chart (Phase 9) with error bars from the statistical summary and each scenario's class coverage annotated; (c) ablation summary chart (Phase 10) with H2/H3/H4 verdicts annotated. The single-image baseline → SENSE-neither → full SENSE progression is included in the ablation chart to partition the total gain between backbone/recipe effects and SENSE's three contributions, and the module portion is marked unresolved where it falls inside the noise band.
 - Deliverable: `results/figures/`, 300dpi minimum.
 - Verification: Consistent color scheme and legible labels across all figures.
 
 **P11.3 — Honest limitations section**
-- Steps: Document every case where SENSE did not outperform DARE/VT-UHGR, and every hypothesis that was rejected or only partially supported. Note that SENSE runs at 224×224 — below EfficientNet-B4's native 380×380 — due to the 8 GB VRAM budget (P5.8), and that this resolution constraint applies equally to the SENSE-neither backbone-matched control.
+- Steps: Document every case where SENSE did not outperform a comparator, and every hypothesis that was rejected or only partially supported. At minimum: (a) SENSE runs at 224×224, below EfficientNet-B4's native 380×380, because of the 8 GB VRAM budget (P5.8), and the same constraint applies to the backbone-matched control; (b) the macro-F1 advantage over the single-image baseline is 0.0069 on the test partition and the advantage over the backbone-matched control is 0.0102, both inside the ±0.020 band, so neither is reported as an established gain — what is established is the minimum-class advantage over the baseline, 0.8571 against 0.7143; (c) each configuration was trained once, so no repeated-seed variance is available and every comparison is subject to that limitation; (d) LOSO folds have unequal gesture inventories and unequal test sizes, so a difficulty ranking cannot separate scenario conditions from inventory; (e) the physical conditions of the scenarios are unverified, so no turbidity or low-light mechanism is asserted; (f) no inference latency was measured, so no speed, real-time, or deployment claim is made (D19).
 - Deliverable: `results/limitations_and_honest_findings.md`.
 - Verification: Every experiment from Phases 8–10 has an entry, positive or negative — this document directly answers RQ1 with appropriate epistemic honesty.
 
 **P11.4 — Finalize the final-evaluation notebook with the full comparison**
-- Steps: Extend `notebooks/06_final_evaluation.ipynb` (created in P8.4) with the scenario-wise and comparative sections that depend on Phase 9/10/11 results — `results/final_comparison_table.md`, Phase 9's per-scenario results, and Phase 10's ablation summary — so the notebook's final saved state matches the "Key Outputs" described in the Notebooks section below.
-- Deliverable: Executed `notebooks/06_final_evaluation.ipynb` (fully finalized).
+- Steps: Extend `notebooks/07_final_evaluation.ipynb` (created in P8.4) with the scenario-wise and comparative sections that depend on Phase 9/10/11 results — `results/final_comparison_table.md`, Phase 9's per-scenario results, and Phase 10's ablation summary — so the notebook's final saved state matches the "Key Outputs" described in the Notebooks section below.
+- Deliverable: Executed `notebooks/07_final_evaluation.ipynb` (fully finalized).
 - Verification: Notebook runs end-to-end; every figure/table listed for this notebook in the Notebooks section is present in its saved output.
 
 ### Phase 11 Deliverables Checklist
 - [ ] Final comparison table built, fully traceable
 - [ ] Headline figures generated at print resolution
 - [ ] Honest limitations section written, RQ1 explicitly answered
-- [ ] `notebooks/06_final_evaluation.ipynb` finalized with full comparison sections
+- [ ] `notebooks/07_final_evaluation.ipynb` finalized with full comparison sections
 
 **Phase 11 exit criterion:** All results needed for the thesis results chapter exist as traceable files; RQ1–RQ4 each have an explicit, evidence-based answer.
 
@@ -1066,11 +1133,11 @@ Phase 11 complete.
   - Validation loss curve (same runs)
   - Validation accuracy curve (same runs)
   - Validation macro-F1 curve (same runs)
-  - Learning-rate comparison (from Phase 7's sanity sweep, if performed)
+  - Learning-rate comparison (from the Phase 7 study, which was performed)
   - Hyperparameter comparison plot (from Phase 7.3)
   - Confusion matrix (standard split, Phase 8)
   - Per-class performance bar chart (Phase 8)
-  - Scenario-wise performance bar chart (Phase 9)
+  - Scenario-wise performance bar chart, annotated with gesture inventory (Phase 9)
   - LOSO comparison chart with error bars (Phase 9)
   - Ablation study comparison chart (Phase 10)
 
@@ -1079,7 +1146,7 @@ Phase 11 complete.
   - Hyperparameter summary table (Phase 7.3)
   - Baseline performance table (Phase 4)
   - Ablation results table (Phase 10)
-  - Robustness/LOSO results table with mean±SD and CI (Phase 9)
+  - Robustness/LOSO results table with mean±SD, CI, per-fold macro F1 over present classes, and per-fold class coverage (Phase 9)
   - Final evaluation summary table (Phase 11)
 
 - Deliverable: `results/publication_artifact_checklist.md` mapping every item above to its exact file path and the phase/task that produced it.
@@ -1131,9 +1198,9 @@ Phase 12 complete.
 - Verification: A clean venv installing from this file reproduces exact package versions used for final results.
 
 **P13.3 — Archive checkpoints externally**
-- Steps: Export final checkpoints — standard-split (`sense_final_standard_split.pth`), 8 LOSO folds (`scenario_holdout_{1..8}_best.pth`), and all 5 ablation variants (`ablation_enhancement_none.pth`, `ablation_enhancement_waternet.pth`, `ablation_stereo_mono.pth`, `ablation_text_guidance_none.pth`, `ablation_neither.pth`) — to external storage with a manifest.
+- Steps: Export final checkpoints to external storage with a manifest: the standard-split checkpoint (`sense_final_standard_split.pth`), the eight LOSO fold checkpoints, and all five ablation variants (`ablation_enhancement_none.pth`, `ablation_enhancement_waternet.pth`, `ablation_stereo_mono.pth`, `ablation_text_guidance_none.pth`, `ablation_neither.pth`). Each LOSO fold checkpoint is copied from its run directory, `runs/loso_fold_{i}/<timestamp>/checkpoints/best.pth`, and archived as `scenario_holdout_{i}_best.pth`; the manifest records the source run directory and the fold's class coverage alongside the file.
 - Deliverable: External archive + `checkpoints/ARCHIVE_MANIFEST.md`.
-- Verification: Manifest cross-references every checkpoint referenced in `final_comparison_table.md`.
+- Verification: Manifest cross-references every checkpoint referenced in `final_comparison_table.md`, and every archived file's source run directory still resolves in the experiment record.
 
 **P13.4 — Reproducibility checklist (new, research-grade addition)**
 - Objective: A single, explicit checklist a reviewer or examiner can use to confirm the project meets baseline reproducibility standards for a thesis/journal submission.
@@ -1175,10 +1242,12 @@ All notebooks live in `notebooks/`. They are strictly for exploration, visualiza
 | `01_preprocessing.ipynb` | Phase 2/3 (P2.7, P3.6) | Raw images, augmentation pipeline visualization, enhancement (FUnIE-GAN/WaterNet) before/after comparisons, image histograms | Before/after preprocessing figures |
 | `02_dataset_split_validation.ipynb` | Phase 2 (P2.8) | Split visualization, class balance per split, scenario distribution per LOSO fold, overlap/leakage verification, LOSO visualization | `split_validation_report.md` figures |
 | `03_baseline_experiment_analysis.ipynb` | Phase 4 (P4.4) | Baseline training/validation loss & accuracy curves, checkpoint analysis, baseline performance summary | Baseline learning curves + summary table |
-| `04_ablation_study.ipynb` | Phase 10 (P10.5) | Enhancement/stereo/text-guidance ablation comparisons, backbone-matched control (P10.6), full-model comparison, H2/H3/H4 verdict visualization | Ablation figures + comparison tables |
-| `05_hyperparameter_analysis.ipynb` | Phase 7 (P7.5) | Learning-rate/batch-size/loss-weight comparison, early-stopping behavior analysis, best-configuration summary | Hyperparameter comparison plots + final config table |
-| `06_final_evaluation.ipynb` | Phase 8 (P8.4), 11 (P11.4) | Confusion matrix, classification report, precision/recall/macro-F1, per-class and scenario-wise performance | Final evaluation figures/tables for thesis and paper |
-| `07_robustness_analysis.ipynb` | Phase 9 (P9.5) | Scenario-wise and fold-wise performance, mean±SD/CI visualization, robustness discussion, failure-case analysis | LOSO robustness figures + statistical summary tables |
+| `04_control_experiment_analysis.ipynb` | Phase 8/10 (P10.5) | Backbone-matched control at the selected recipe (E12) against the selected model and the baseline; enhancement/stereo/text-guidance ablation comparisons once those arms exist; full-model comparison, H2/H3/H4 verdict visualization | Control figures + comparison tables |
+| `05_hyperparameter_analysis.ipynb` | Phase 7 (P7.5) | Learning-rate/stage-3-multiplier comparison, early-stopping behavior analysis, best-configuration summary | Hyperparameter comparison plots + final config table |
+| `07_final_evaluation.ipynb` | Phase 8 (P8.4), 11 (P11.4) | Confusion matrix, classification report, precision/recall/macro-F1, per-class and scenario-wise performance | Final evaluation figures/tables for thesis and paper |
+| `08_robustness_analysis.ipynb` | Phase 9 (P9.5) | Scenario-wise and fold-wise performance, coverage-annotated macro F1, mean±SD/CI visualization, robustness discussion, failure-case analysis | LOSO robustness figures + statistical summary tables |
+
+> **Notebook numbering.** The executed inventory is `00`, `01`, `02`, `03`, `04_control_experiment_analysis`, `05_hyperparameter_analysis`, and `07_final_evaluation`. No notebook numbered `06` exists; the final-evaluation notebook carries `07` and the robustness notebook will carry `08`. The numbers are identifiers, not a sequence, and the table above is the authoritative list.
 
 ---
 
@@ -1188,7 +1257,7 @@ This mirrors P12.1 in compact reference form — see Phase 12 for the full gener
 
 **Figures:** dataset distribution · preprocessing comparison · training/validation loss curves · validation accuracy curve · validation macro-F1 curve · learning-rate comparison · hyperparameter comparison · confusion matrix · per-class performance · scenario-wise performance · LOSO comparison · ablation study comparison.
 
-**Tables:** dataset statistics · hyperparameter summary · baseline performance · ablation results · robustness/LOSO results (mean±SD, CI) · final evaluation summary.
+**Tables:** dataset statistics · hyperparameter summary · baseline performance · ablation results · robustness/LOSO results (mean±SD, CI, per-fold macro F1 over present classes, per-fold class coverage) · final evaluation summary.
 
 All saved under `results/figures/` and `results/tables/`, inventoried in `results/publication_artifact_checklist.md`.
 
@@ -1208,6 +1277,12 @@ All saved under `results/figures/` and `results/tables/`, inventoried in `result
 | `training.loss.class_weighted` | training config | `true` \| `false` | Whether CrossEntropy in `SenseLoss` uses inverse-frequency class weights from `compute_class_weights()` (P2.9); default `true` for all SENSE runs, `false` for the Phase 4 baseline to preserve literature comparability |
 | `training.phases` | training config | epoch ranges | 3-phase progressive unfreezing schedule boundaries |
 | `training.scheduler_eta_min_ratio` | training config | float (e.g. 0.01) | Floor ratio for cosine LR schedule (`eta_min = base_lr * scheduler_eta_min_ratio`) |
+| `training.base_lr` | training config | float (selected: `3.0e-4`) | Learning rate for the stage-1 head-only phase; every other rate is a multiple of it |
+| `training.phases.phaseN.lr_scale` | training config | float | Backbone learning-rate multiplier for stage *N*; the selected configuration uses 1.0 / 0.1 / 0.3, and the stage-3 value was the only factor varied in the Phase 7 study |
+| `training.epochs` | training config | int (50) | Total epochs; also sets the cosine schedule's `t_max` |
+| `training.early_stopping_patience` | training config | int (10) | Epochs without improvement, counted from the first unfreeze, before training stops |
+| `data.image_size` | data config | int (224) | Square input resolution, frozen by the P5.8 VRAM probe and identical for every SENSE variant |
+| `training.batch_size` | training config | int (16) | Batch size, frozen by the P5.8 VRAM probe; the contrastive term requires a reasonably large batch |
 | `data.split.protocol` | data config | `standard` \| `loso` | Which split family (Phase 2.2 vs 2.3) a run uses |
 
 ## Appendix B — Task ID Quick Reference
@@ -1219,20 +1294,21 @@ Use `P{phase}.{task}` IDs to request specific work, e.g.: "Implement P2.0" → b
 1. **End of Phase 0:** CUDA + GPU verified working.
 2. **End of Phase 1:** Dataset integrity report shows zero missing-file errors.
 3. **End of Phase 2:** `split_validation_report.md` shows zero leakage across the standard split and all 8 LOSO folds.
-4. **End of Phase 4:** Baseline reproduction accuracy is plausible (not near-random).
+4. **End of Phase 4:** Baseline accuracy is plausible (not near-random). **Met:** 0.9655 validation accuracy at the selected shared-protocol checkpoint (E9).
 5. **End of Phase 5:** All four `SENSE` mode combinations pass forward+backward tests within VRAM budget.
-6. **Before any Phase 8 evaluation is trusted:** confirm the checkpoint being evaluated was selected using validation-split performance only (per the Evaluation Strategy section), and that no test split — standard or LOSO — was accessed at any point before this final evaluation step.
+6. **Before any test result is trusted:** confirm the checkpoint being evaluated was selected using validation-split performance only (per the Evaluation Strategy section), and that the test partition in question had not been read at any earlier point. **Discharged for the standard test partition:** both frozen models were evaluated in a single pass each under E11, by a script that refuses validation partitions, after neither had read the partition; the integrity checks listed under P8.3 passed before the values were accepted. **Open for each LOSO fold:** the same confirmation is required per fold before that fold's result is used.
 7. **Before any headline number is reported in the thesis/paper:** confirm it exists in `results/publication_artifact_checklist.md` with a traceable path to its source config, checkpoint, and experiment-tracking directory (per Phase 12).
+8. **Before any LOSO aggregate is reported:** confirm that the per-fold macro F1 is over the classes present in the fold, that the seventeen-class value and the class coverage appear beside it, and that accuracy — not macro F1 — is the quantity being averaged (decision D21).
 
 ## Appendix D — Final Deliverables (expanded)
 
 - Full source code (`src/`, `scripts/`, `configs/`)
-- All trained models/checkpoints (standard-split, 8 LOSO folds, 5 ablation variants: `ablation_enhancement_none.pth`, `ablation_enhancement_waternet.pth`, `ablation_stereo_mono.pth`, `ablation_text_guidance_none.pth`, `ablation_neither.pth`)
-- All configuration files, including the immutable `results/archived_configs/` snapshot
+- All trained models/checkpoints (standard-split, 8 LOSO folds — archived from `runs/loso_fold_{i}/<timestamp>/checkpoints/best.pth` — and 5 ablation variants: `ablation_enhancement_none.pth`, `ablation_enhancement_waternet.pth`, `ablation_stereo_mono.pth`, `ablation_text_guidance_none.pth`, `ablation_neither.pth`)
+- All configuration files, including the eight fold configs and the immutable `results/archived_configs/` snapshot
 - Complete experiment logs (`runs/{experiment}/{timestamp}/` — config, metrics.csv, training.log, seed, runtime, GPU info, git commit, per P6.5)
 - Full TensorBoard logs
-- All generated figures and tables (per the Publication Artifact Index)
-- All eight analysis/exploration notebooks, executed with saved outputs
+- All generated figures and tables (per the Publication Artifact Index), including the per-scenario LOSO table with per-fold class coverage
+- All analysis/exploration notebooks, executed with saved outputs (seven exist as of this revision; `08_robustness_analysis.ipynb` is added in Phase 9)
 - Thesis-ready artifacts: `results/thesis_ready_tables.md`, `results/results_section_draft.md`
 - `results/REPRODUCIBILITY_CHECKLIST.md` with linked evidence for every item
 - `requirements-lock.txt` and full environment specification
